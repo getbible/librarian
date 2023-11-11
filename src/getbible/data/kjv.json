@@ -1,0 +1,659 @@
+{
+  "1": [
+    "Genesis",
+    "Gen",
+    "Ge",
+    "Gn"
+  ],
+  "2": [
+    "Exodus",
+    "Exod",
+    "Ex",
+    "Exo"
+  ],
+  "3": [
+    "Leviticus",
+    "Lev",
+    "Lv",
+    "Le"
+  ],
+  "4": [
+    "Numbers",
+    "Num",
+    "Nm",
+    "Nb",
+    "Nu"
+  ],
+  "5": [
+    "Deuteronomy",
+    "Deut",
+    "Dt",
+    "De"
+  ],
+  "6": [
+    "Joshua",
+    "Josh",
+    "Jos",
+    "Jsh"
+  ],
+  "7": [
+    "Judges",
+    "Judg",
+    "Jdg",
+    "Jg",
+    "Jdgs"
+  ],
+  "8": [
+    "Ruth",
+    "Rth",
+    "Ru"
+  ],
+  "9": [
+    "1 Samuel",
+    "1 Sam",
+    "1 Sm",
+    "1 Sa",
+    "1 S",
+    "I Sam",
+    "I Sa",
+    "1st Samuel",
+    "1st Sam",
+    "First Samuel",
+    "First Sam"
+  ],
+  "10": [
+    "2 Samuel",
+    "2 Sam",
+    "2 Sm",
+    "2 Sa",
+    "2 S",
+    "II Sam",
+    "II Sa",
+    "2nd Samuel",
+    "2nd Sam",
+    "Second Samuel",
+    "Second Sam"
+  ],
+  "11": [
+    "1 Kings",
+    "1 Kgs",
+    "1 Ki",
+    "1 Kin",
+    "1K",
+    "I Kgs",
+    "I Ki",
+    "1st Kings",
+    "1st Kgs",
+    "First Kings",
+    "First Kgs"
+  ],
+  "12": [
+    "2 Kings",
+    "2 Kgs",
+    "2 Ki",
+    "2 Kin",
+    "2K",
+    "II Kgs",
+    "II Ki",
+    "2nd Kings",
+    "2nd Kgs",
+    "Second Kings",
+    "Second Kgs"
+  ],
+  "13": [
+    "1 Chronicles",
+    "1 Chron",
+    "1 Chr",
+    "1 Ch",
+    "I Chron",
+    "I Chr",
+    "I Ch",
+    "1st Chronicles",
+    "1st Chron",
+    "First Chronicles",
+    "First Chron"
+  ],
+  "14": [
+    "2 Chronicles",
+    "2 Chron",
+    "2 Chr",
+    "2 Ch",
+    "II Chron",
+    "II Chr",
+    "II Ch",
+    "2nd Chronicles",
+    "2nd Chron",
+    "Second Chronicles",
+    "Second Chron"
+  ],
+  "15": [
+    "Ezra",
+    "Ezr",
+    "Ez"
+  ],
+  "16": [
+    "Nehemiah",
+    "Neh",
+    "Ne"
+  ],
+  "17": [
+    "Esther",
+    "Esth",
+    "Est",
+    "Es"
+  ],
+  "18": [
+    "Job",
+    "Jb"
+  ],
+  "19": [
+    "Psalms",
+    "Ps",
+    "Pslm",
+    "Psm",
+    "Psalm",
+    "Psa",
+    "Pss"
+  ],
+  "20": [
+    "Proverbs",
+    "Prov",
+    "Prv",
+    "Pr",
+    "Pro"
+  ],
+  "21": [
+    "Ecclesiastes",
+    "Eccl",
+    "Ecc",
+    "Qo",
+    "Eccles",
+    "Eccle",
+    "Ec",
+    "Qoh"
+  ],
+  "22": [
+    "Song of Solomon",
+    "Song",
+    "Sng",
+    "So",
+    "Song of Songs",
+    "SOS",
+    "Canticle of Canticles",
+    "Canticles",
+    "Cant"
+  ],
+  "23": [
+    "Isaiah",
+    "Isa",
+    "Is"
+  ],
+  "24": [
+    "Jeremiah",
+    "Jer",
+    "Je",
+    "Jr"
+  ],
+  "25": [
+    "Lamentations",
+    "Lam",
+    "La"
+  ],
+  "26": [
+    "Ezekiel",
+    "Ezek",
+    "Eze",
+    "Ezk"
+  ],
+  "27": [
+    "Daniel",
+    "Dan",
+    "Da",
+    "Dn"
+  ],
+  "28": [
+    "Hosea",
+    "Hos",
+    "Ho"
+  ],
+  "29": [
+    "Joel",
+    "Jl"
+  ],
+  "30": [
+    "Amos",
+    "Am"
+  ],
+  "31": [
+    "Obadiah",
+    "Obad",
+    "Ob",
+    "Abd"
+  ],
+  "32": [
+    "Jonah",
+    "Jon",
+    "Jnh"
+  ],
+  "33": [
+    "Micah",
+    "Mic",
+    "Mc"
+  ],
+  "34": [
+    "Nahum",
+    "Nah",
+    "Na"
+  ],
+  "35": [
+    "Habakkuk",
+    "Hab",
+    "Hb"
+  ],
+  "36": [
+    "Zephaniah",
+    "Zeph",
+    "Zep",
+    "Zp"
+  ],
+  "37": [
+    "Haggai",
+    "Hag",
+    "Hg"
+  ],
+  "38": [
+    "Zechariah",
+    "Zech",
+    "Zec",
+    "Zc"
+  ],
+  "39": [
+    "Malachi",
+    "Mal",
+    "Ml"
+  ],
+  "40": [
+    "Matthew",
+    "Matt",
+    "Mt",
+    "Mth"
+  ],
+  "41": [
+    "Mark",
+    "Mk",
+    "Mrk",
+    "Mar",
+    "Mr"
+  ],
+  "42": [
+    "Luke",
+    "Lk",
+    "Luk"
+  ],
+  "43": [
+    "John",
+    "Jn",
+    "Jhn",
+    "Joh"
+  ],
+  "44": [
+    "Acts",
+    "Ac",
+    "Act"
+  ],
+  "45": [
+    "Romans",
+    "Rom",
+    "Ro",
+    "Rm"
+  ],
+  "46": [
+    "1 Corinthians",
+    "1 Cor",
+    "1 Co",
+    "1 Cr",
+    "I Cor",
+    "I Co",
+    "I Corinthians",
+    "1st Corinthians",
+    "First Corinthians"
+  ],
+  "47": [
+    "2 Corinthians",
+    "2 Cor",
+    "2 Co",
+    "2 Cr",
+    "II Cor",
+    "II Co",
+    "II Corinthians",
+    "2nd Corinthians",
+    "Second Corinthians"
+  ],
+  "48": [
+    "Galatians",
+    "Gal",
+    "Ga",
+    "Gl"
+  ],
+  "49": [
+    "Ephesians",
+    "Eph",
+    "Ep",
+    "Ephes"
+  ],
+  "50": [
+    "Philippians",
+    "Phil",
+    "Php",
+    "Pp"
+  ],
+  "51": [
+    "Colossians",
+    "Col",
+    "Cl",
+    "Co"
+  ],
+  "52": [
+    "1 Thessalonians",
+    "1 Thess",
+    "1 Thes",
+    "1 Th",
+    "I Thessalonians",
+    "I Thess",
+    "I Thes",
+    "I Th",
+    "1st Thessalonians",
+    "1st Thess",
+    "First Thessalonians",
+    "First Thess"
+  ],
+  "53": [
+    "2 Thessalonians",
+    "2 Thess",
+    "2 Thes",
+    "2 Th",
+    "II Thessalonians",
+    "II Thess",
+    "II Thes",
+    "II Th",
+    "2nd Thessalonians",
+    "2nd Thess",
+    "Second Thessalonians",
+    "Second Thess"
+  ],
+  "54": [
+    "1 Timothy",
+    "1 Tim",
+    "1 Ti",
+    "1 Tm",
+    "I Timothy",
+    "I Tim",
+    "I Ti",
+    "1st Timothy",
+    "1st Tim",
+    "First Timothy",
+    "First Tim"
+  ],
+  "55": [
+    "2 Timothy",
+    "2 Tim",
+    "2 Ti",
+    "2 Tm",
+    "II Timothy",
+    "II Tim",
+    "II Ti",
+    "2nd Timothy",
+    "2nd Tim",
+    "Second Timothy",
+    "Second Tim"
+  ],
+  "56": [
+    "Titus",
+    "Tit",
+    "Ti"
+  ],
+  "57": [
+    "Philemon",
+    "Phlm",
+    "Phm",
+    "Pm",
+    "Philem"
+  ],
+  "58": [
+    "Hebrews",
+    "Heb",
+    "He"
+  ],
+  "59": [
+    "James",
+    "Jas",
+    "Jm"
+  ],
+  "60": [
+    "1 Peter",
+    "1 Pet",
+    "1 Pt",
+    "1 Pe",
+    "1 P",
+    "I Pet",
+    "I Pt",
+    "I Pe",
+    "I Peter",
+    "1st Peter",
+    "First Peter"
+  ],
+  "61": [
+    "2 Peter",
+    "2 Pet",
+    "2 Pt",
+    "2 Pe",
+    "2 P",
+    "II Peter",
+    "II Pet",
+    "II Pt",
+    "II Pe",
+    "2nd Peter",
+    "Second Peter"
+  ],
+  "62": [
+    "1 John",
+    "1 Jn",
+    "1 Jhn",
+    "1 J",
+    "1Joh",
+    "I John",
+    "I Jhn",
+    "I Joh",
+    "I Jn",
+    "I Jo",
+    "1st John",
+    "First John"
+  ],
+  "63": [
+    "2 John",
+    "2 Jn",
+    "2 Jhn",
+    "2 J",
+    "2Joh",
+    "II John",
+    "II Jhn",
+    "II Joh",
+    "II Jn",
+    "II Jo",
+    "2nd John",
+    "Second John"
+  ],
+  "64": [
+    "3 John",
+    "3 Jn",
+    "3 Jhn",
+    "3 J",
+    "3Joh",
+    "III John",
+    "III Jhn",
+    "III Joh",
+    "III Jn",
+    "III Jo",
+    "3rd John",
+    "Third John"
+  ],
+  "65": [
+    "Jude",
+    "Jud",
+    "Jd"
+  ],
+  "66": [
+    "Revelation",
+    "Rev",
+    "Re",
+    "Rv",
+    "The Revelation"
+  ],
+  "67": [
+    "1 Esdras",
+    "1 Esd",
+    "1 Es",
+    "1 Esdr",
+    "I Esdras",
+    "I Esdr",
+    "I Esd",
+    "I Es",
+    "1st Esdras",
+    "First Esdras"
+  ],
+  "68": [
+    "2 Esdras",
+    "2 Esd",
+    "2 Es",
+    "2 Esdr",
+    "II Esdras",
+    "II Esdr",
+    "II Esd",
+    "II Es",
+    "2nd Esdras",
+    "Second Esdras"
+  ],
+  "69": [
+    "Tobit",
+    "Tob",
+    "Tb"
+  ],
+  "70": [
+    "Judith",
+    "Jdt",
+    "Jud",
+    "Jth",
+    "Jdth"
+  ],
+  "71": [
+    "Additions to Esther",
+    "Add Esth",
+    "Add Est",
+    "Rest Est",
+    "Add Es",
+    "Rest of Esther",
+    "The Rest of Esther",
+    "AEs",
+    "AddEsth"
+  ],
+  "72": [
+    "Additional Psalm",
+    "Add Ps",
+    "Add Psalm"
+  ],
+  "73": [
+    "Wisdom",
+    "Wis",
+    "Ws",
+    "Wisd. of Sol",
+    "Wisdom of Solomon"
+  ],
+  "74": [
+    "Sirach",
+    "Sir",
+    "Ecclus"
+  ],
+  "75": [
+    "Baruch",
+    "Bar"
+  ],
+  "76": [
+    "Prayer of Azariah",
+    "Pr Az",
+    "Azar"
+  ],
+  "77": [
+    "Susanna",
+    "Sus"
+  ],
+  "78": [
+    "Bel and the Dragon",
+    "Bel",
+    "Bld",
+    "Bel and Dr"
+  ],
+  "79": [
+    "Prayer of Manasses",
+    "Pr Man",
+    "Man",
+    "Pr of Man",
+    "PMa",
+    "Prayer of Manasseh"
+  ],
+  "80": [
+    "1 Maccabees",
+    "1 Macc",
+    "1 Mac",
+    "1 Mc",
+    "1Ma",
+    "1M",
+    "I Maccabees",
+    "I Macc",
+    "I Mac",
+    "I Ma",
+    "1st Maccabees",
+    "First Maccabees"
+  ],
+  "81": [
+    "2 Maccabees",
+    "2 Macc",
+    "2 Mac",
+    "2 Mc",
+    "2Ma",
+    "2M",
+    "II Maccabees",
+    "II Macc",
+    "II Mac",
+    "II Ma",
+    "2nd Maccabees",
+    "Second Maccabees"
+  ],
+  "82": [
+    "3 Maccabees",
+    "3 Macc",
+    "3 Mac",
+    "3 Mc",
+    "3Ma",
+    "3M",
+    "III Maccabees",
+    "III Macc",
+    "III Mac",
+    "III Ma",
+    "3rd Maccabees",
+    "Third Maccabees"
+  ],
+  "83": [
+    "4 Maccabees",
+    "4 Macc",
+    "4 Mac",
+    "4 Mc",
+    "4Ma",
+    "4M",
+    "IV Maccabees",
+    "IV Macc",
+    "IV Mac",
+    "IV Ma",
+    "4th Maccabees",
+    "Fourth Maccabees"
+  ]
+}
