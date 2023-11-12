@@ -7,7 +7,11 @@ The `getBible Librarian` package is a Python library designed for efficiently re
 - [Get Reference](https://git.vdm.dev/getBible/librarian/src/branch/master/docs/getbible_reference.md)
 - [Get Book Number](https://git.vdm.dev/getBible/librarian/src/branch/master/docs/getbible_book_number.md)
 
-## Installation
+## Installation (pip)
+
+To install the package using pip, see [the documentation](https://git.vdm.dev/getBible/-/packages/pypi/getbible-librarian).
+
+## Installation (git)
 
 To install `getBible-Librarian`, you need to clone the repository and install the package manually. Ensure you have Python 3.7 or higher installed.
 
