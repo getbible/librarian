@@ -10,7 +10,11 @@ The `GetBibleBookNumber` package is a Python library designed for efficiently re
 - Provides functionality to dump Trie data into a JSON file for review.
 - Fallback search mechanisms for comprehensive reference coverage.
 
-## Installation
+## Installation (pip)
+
+To install the package using pip, see [the documentation](https://git.vdm.dev/getBible/-/packages/pypi/getbible-librarian).
+
+## Installation (git)
 
 To install `GetBibleBookNumber`, you need to clone the repository and install the package manually. Ensure you have Python 3.7 or higher installed.
 
@@ -84,4 +88,3 @@ Contributions to the `GetBibleBookNumber` class is welcome. Please ensure to fol
 ## License
 
 This project is licensed under the GNU GPL v2.0. See the LICENSE file for more details.
-

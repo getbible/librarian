@@ -6,7 +6,11 @@ The `GetBibleReference` package is a Python library designed for efficiently ret
 
 - Returns well formed book-number, chatper-number, and verse array when given any scripture text reference.
 
-## Installation
+## Installation (pip)
+
+To install the package using pip, see [the documentation](https://git.vdm.dev/getBible/-/packages/pypi/getbible-librarian).
+
+## Installation (git)
 
 To install `GetBibleReference`, you need to clone the repository and install the package manually. Ensure you have Python 3.7 or higher installed.
 
@@ -66,4 +70,3 @@ Contributions to the `GetBibleReference` class is welcome. Please ensure to foll
 ## License
 
 This project is licensed under the GNU GPL v2.0. See the LICENSE file for more details.
-

@@ -4,6 +4,7 @@ The `getBible Librarian` package is a Python library designed for efficiently re
 
 ## Features
 
+- [Get Scripture](https://git.vdm.dev/getBible/librarian/src/branch/master/docs/getbible_scripture.md)
 - [Get Reference](https://git.vdm.dev/getBible/librarian/src/branch/master/docs/getbible_reference.md)
 - [Get Book Number](https://git.vdm.dev/getBible/librarian/src/branch/master/docs/getbible_book_number.md)
 
