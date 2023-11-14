@@ -4,8 +4,8 @@ with open('README.md', 'r', encoding='utf-8') as f:
     long_description = f.read()
 
 setup(
-    name="getBible-librarian",
-    version="0.2.2",
+    name="getbible",
+    version="1.0.0",
     author="Llewellyn van der Merwe",
     author_email="getbible@vdm.io",
     description="A Python package to retrieving Bible references with ease.",

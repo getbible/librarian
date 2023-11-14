@@ -54,14 +54,10 @@ jobs:
       run: |
         python -m build
 
-    - name: Configure .pypirc
+    - name: Publish to PyPI
+      env:
+        TWINE_USERNAME: __token__
+        TWINE_PASSWORD: ${{ secrets.PYPI_API_TOKEN }}
       run: |
-        echo "[distutils]" > ~/.pypirc
-        echo "index-servers = getbible" >> ~/.pypirc
-        echo "[getbible]" >> ~/.pypirc
-        echo "repository = https://${{ secrets.GITEA_URL }}/api/packages/${{ github.repository_owner }}/pypi" >> ~/.pypirc
-        echo "username = ${{ secrets.GITEA_USERNAME }}" >> ~/.pypirc
-        echo "password = ${{ secrets.GITEA_TOKEN }}" >> ~/.pypirc
+        twine upload dist/*
 
-    - name: Push to Gitea
-      run: python3 -m twine upload --repository getbible dist/*
