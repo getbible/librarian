@@ -1,4 +1,4 @@
-name: Python Unittest
+name: Stable Librarian
 
 on:
   push:
