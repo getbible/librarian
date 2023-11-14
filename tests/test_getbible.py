@@ -66,6 +66,74 @@ class TestGetBible(unittest.TestCase):
                      "text": "Wat van die begin af was, wat ons gehoor het, wat ons met ons o\u00eb gesien het, wat ons aanskou het en ons hande getas het aangaande die Woord van die lewe \u2014 "}]}}
         self.assertEqual(actual_result, expected_result, "Failed to find 'Ge1:1;Jn1:1;1Jn1:1' scripture.")
 
+    def test_valid_multiple_reference_select_aleppo(self):
+        actual_result = self.getbible.select('Ge1:1-3;Ps1:1;ps1:1-2;Ge1:6-7,10', 'aleppo')
+        expected_result = {
+            'aleppo_19_1': {'abbreviation': 'aleppo',
+                            'book_name': 'תְּהִלִּים',
+                            'book_nr': 19,
+                            'chapter': 1,
+                            'direction': 'RTL',
+                            'encoding': 'UTF-8',
+                            'lang': 'hbo',
+                            'language': 'Hebrew',
+                            'name': 'תְּהִלִּים 1',
+                            'translation': 'Aleppo Codex',
+                            'verses': [{'chapter': 1,
+                                        'name': 'תְּהִלִּים 1:1',
+                                        'text': '\xa0\xa0אשרי האיש— \xa0\xa0 אשר לא הלך '
+                                                'בעצת רשעיםובדרך חטאים לא עמד \xa0\xa0 '
+                                                'ובמושב לצים לא ישב ',
+                                        'verse': 1},
+                                       {'chapter': 1,
+                                        'name': 'תְּהִלִּים 1:2',
+                                        'text': '\xa0\xa0כי אם בתורת יהוה חפצו \xa0\xa0 '
+                                                'ובתורתו יהגה יומם ולילה ',
+                                        'verse': 2}]},
+            'aleppo_1_1': {'abbreviation': 'aleppo',
+                           'book_name': 'בְּרֵאשִׁית',
+                           'book_nr': 1,
+                           'chapter': 1,
+                           'direction': 'RTL',
+                           'encoding': 'UTF-8',
+                           'lang': 'hbo',
+                           'language': 'Hebrew',
+                           'name': 'בְּרֵאשִׁית 1',
+                           'translation': 'Aleppo Codex',
+                           'verses': [{'chapter': 1,
+                                       'name': 'בְּרֵאשִׁית 1:1',
+                                       'text': 'בראשית ברא אלהים את השמים ואת הארץ ',
+                                       'verse': 1},
+                                      {'chapter': 1,
+                                       'name': 'בְּרֵאשִׁית 1:2',
+                                       'text': 'והארץ היתה תהו ובהו וחשך על פני תהום ורוח '
+                                               'אלהים מרחפת על פני המים ',
+                                       'verse': 2},
+                                      {'chapter': 1,
+                                       'name': 'בְּרֵאשִׁית 1:3',
+                                       'text': 'ויאמר אלהים יהי אור ויהי אור ',
+                                       'verse': 3},
+                                      {'chapter': 1,
+                                       'name': 'בְּרֵאשִׁית 1:6',
+                                       'text': 'ויאמר אלהים יהי רקיע בתוך המים ויהי מבדיל '
+                                               'בין מים למים ',
+                                       'verse': 6},
+                                      {'chapter': 1,
+                                       'name': 'בְּרֵאשִׁית 1:7',
+                                       'text': 'ויעש אלהים את הרקיע ויבדל בין המים אשר '
+                                               'מתחת לרקיע ובין המים אשר מעל לרקיע ויהי '
+                                               'כן ',
+                                       'verse': 7},
+                                      {'chapter': 1,
+                                       'name': 'בְּרֵאשִׁית 1:10',
+                                       'text': 'ויקרא אלהים ליבשה ארץ ולמקוה המים קרא '
+                                               'ימים וירא אלהים כי טוב ',
+                                       'verse': 10}]
+                           }
+        }
+
+        self.assertEqual(actual_result, expected_result, "Failed to find 'Ge1:1-3;Ps1:1;ps1:1-2;Ge1:6-7,1' scripture.")
+
 
 if __name__ == '__main__':
     unittest.main()

@@ -1,6 +1,9 @@
 import os
 import json
 import requests
+import threading
+import time
+from datetime import datetime, timedelta
 from getbible import GetBibleReference
 
 
@@ -8,6 +11,9 @@ class GetBible:
     def __init__(self, repo_path="https://api.getbible.net", version='v2'):
         """
         Initialize the GetBible class.
+
+        Sets up the class by initializing the cache, starting the background thread for
+        monthly cache reset, and other necessary setups.
 
         :param repo_path: The repository path, which can be a URL or a local file path.
         :param version: The version of the Bible repository.
@@ -17,8 +23,48 @@ class GetBible:
         self.__repo_version = version
         self.__books_cache = {}
         self.__chapters_cache = {}
+        self.__start_cache_reset_thread()
         # Determine if the repository path is a URL
         self.__repo_path_url = self.__repo_path.startswith("http://") or self.__repo_path.startswith("https://")
+
+    def __start_cache_reset_thread(self):
+        """
+        Start a background thread to reset the cache monthly.
+
+        This method creates and starts a daemon thread that runs the cache reset function
+        every month.
+        """
+        reset_thread = threading.Thread(target=self.__reset_cache_monthly)
+        reset_thread.daemon = True  # Daemonize thread
+        reset_thread.start()
+
+    def __reset_cache_monthly(self):
+        """
+        Periodically clears the cache on the first day of each month.
+
+        This method runs in a background thread and calculates the time until the start
+        of the next month. It sleeps until that time and then clears the cache.
+        """
+        while True:
+            time_to_sleep = self.__calculate_time_until_next_month()
+            time.sleep(time_to_sleep)
+            self.__chapters_cache.clear()
+            print(f"Cache cleared on {datetime.now()}")
+
+    def __calculate_time_until_next_month(self):
+        """
+        Calculate the seconds until the start of the next month.
+
+        Determines how many seconds are left until the first day of the next month
+        from the current time. This duration is used by the cache reset thread to
+        sleep until the cache needs to be cleared.
+
+        :return: Number of seconds until the start of the next month.
+        """
+        now = datetime.now()
+        # Calculate the first day of the next month
+        first_of_next_month = (now.replace(day=1) + timedelta(days=32)).replace(day=1)
+        return (first_of_next_month - now).total_seconds()
 
     def select(self, reference, abbreviation='kjv'):
         """
@@ -37,8 +83,7 @@ class GetBible:
             except ValueError:
                 raise ValueError(f"Invalid reference format.")
 
-            for verse in reference.verses:
-                self.__set_verse(abbreviation, reference.book, reference.chapter, verse, result)
+            self.__set_verse(abbreviation, reference.book, reference.chapter, reference.verses, result)
 
         return result
 
@@ -53,32 +98,38 @@ class GetBible:
 
         return json.dumps(self.select(reference, abbreviation))
 
-    def __set_verse(self, abbreviation, book, chapter, verse, result):
+    def __set_verse(self, abbreviation, book, chapter, verses, result):
         """
         Set verse information into the result JSON.
-
         :param abbreviation: Bible translation abbreviation.
         :param book: The book of the Bible.
         :param chapter: The chapter number.
-        :param verse: The verse number.
+        :param verses: List of verse numbers.
         :param result: The dictionary to store verse information.
         """
         cache_key = f"{abbreviation}_{book}_{chapter}"
         if cache_key not in self.__chapters_cache:
-            self.__chapters_cache[cache_key] = self.__retrieve_chapter_data(abbreviation, book, chapter)
-        chapter_data = self.__chapters_cache[cache_key]
-        verse_info = [v for v in chapter_data.get("verses", []) if str(v.get("verse")) == str(verse)]
-        if not verse_info:
-            raise ValueError(f"Verse {verse} not found in book {book}, chapter {chapter}.")
-
-        if cache_key in result:
-            existing_verses = {str(v["verse"]) for v in result[cache_key].get("verses", [])}
-            new_verses = [v for v in verse_info if str(v["verse"]) not in existing_verses]
-            result[cache_key]["verses"].extend(new_verses)
+            chapter_data = self.__retrieve_chapter_data(abbreviation, book, chapter)
+            # Convert verses list to dictionary for faster lookup
+            verse_dict = {str(v["verse"]): v for v in chapter_data.get("verses", [])}
+            chapter_data["verses"] = verse_dict
+            self.__chapters_cache[cache_key] = chapter_data
         else:
-            verse_data = chapter_data.copy()
-            verse_data["verses"] = verse_info
-            result[cache_key] = verse_data
+            chapter_data = self.__chapters_cache[cache_key]
+
+        for verse in verses:
+            verse_info = chapter_data["verses"].get(str(verse))
+            if not verse_info:
+                raise ValueError(f"Verse {verse} not found in book {book}, chapter {chapter}.")
+
+            if cache_key in result:
+                existing_verses = {str(v["verse"]) for v in result[cache_key].get("verses", [])}
+                if str(verse) not in existing_verses:
+                    result[cache_key]["verses"].append(verse_info)
+            else:
+                # Include all other relevant elements of your JSON structure
+                result[cache_key] = {key: chapter_data[key] for key in chapter_data if key != "verses"}
+                result[cache_key]["verses"] = [verse_info]
 
     def __check_translation(self, abbreviation):
         """

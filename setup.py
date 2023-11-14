@@ -1,11 +1,8 @@
 from setuptools import setup, find_packages
 
-with open('requirements.txt') as f:
-    required = f.read().splitlines()
-
 setup(
     name="getBible-librarian",
-    version="0.2.0",
+    version="0.2.1",
     author="Llewellyn van der Merwe",
     author_email="getbible@vdm.io",
     description="A Python package to retrieving Bible references with ease.",
@@ -16,7 +13,10 @@ setup(
     packages=find_packages(where="src"),
     package_data={"getbible": ["data/*.json"]},
     include_package_data=True,
-    install_requires=required,
+    install_requires=[
+        "requests~=2.31.0",
+        "setuptools>=65.5.1"
+    ],
     classifiers=[
         "Programming Language :: Python :: 3",
         "License :: OSI Approved :: GNU General Public License v2 or later (GPLv2+)",
