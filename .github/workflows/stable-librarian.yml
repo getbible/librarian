@@ -2,9 +2,9 @@ name: Stable Librarian
 
 on:
   push:
-    branches: [ master ]
+    branches: [ staging ]
   pull_request:
-    branches: [ master ]
+    branches: [ master, staging ]
   workflow_dispatch:
 
 jobs:
