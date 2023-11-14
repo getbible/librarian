@@ -1,6 +1,7 @@
 # getBible Librarian
 
 [![Stable Librarian](https://github.com/getbible/librarian/actions/workflows/stable-librarian.yml/badge.svg)](https://github.com/getbible/librarian/actions/workflows/stable-librarian.yml)
+[![GetBible Librarian](https://img.shields.io/pypi/v/getbible?style=flat-square)](https://pypi.org/project/getbible/)
 
 The `getBible` Librarian package is a Python library designed for efficiently retrieving the scripture reference across various translations.
 
@@ -9,6 +10,7 @@ The `getBible` Librarian package is a Python library designed for efficiently re
 ```bash
 pip install getbible
 ```
+> see package on [pypi](https://pypi.org/project/getbible)
 
 ## Features
 
