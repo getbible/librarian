@@ -28,13 +28,15 @@ class GetBibleBookNumber:
             translation_code = 'kjv'
 
         translation = self._tries.get(translation_code)
-        if translation and (result := translation.search(reference)):
+        result = translation.search(reference) if translation else None
+        if result:
             return result
 
         # If 'kjv' is not the original choice, try it next
         if translation_code != 'kjv':
             translation = self._tries.get('kjv')
-            if translation and (result := translation.search(reference)):
+            result = translation.search(reference) if translation else None
+            if result:
                 return result
 
         # Fallback to other translations
@@ -43,7 +45,8 @@ class GetBibleBookNumber:
 
         for code in fallback_translations:
             translation = self._tries.get(code)
-            if translation and (result := translation.search(reference)):
+            result = translation.search(reference) if translation else None
+            if result:
                 return result
 
         return None
