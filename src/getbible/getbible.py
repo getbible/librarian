@@ -1,14 +1,16 @@
 import os
+import re
 import json
 import requests
 import threading
 import time
 from datetime import datetime, timedelta
+from typing import Dict, Optional, Union
 from getbible import GetBibleReference
 
 
 class GetBible:
-    def __init__(self, repo_path="https://api.getbible.net", version='v2'):
+    def __init__(self, repo_path: str = "https://api.getbible.net", version: str = 'v2') -> None:
         """
         Initialize the GetBible class.
 
@@ -24,49 +26,11 @@ class GetBible:
         self.__books_cache = {}
         self.__chapters_cache = {}
         self.__start_cache_reset_thread()
+        self.__pattern = re.compile(r'^[a-zA-Z0-9]{1,30}$')
         # Determine if the repository path is a URL
         self.__repo_path_url = self.__repo_path.startswith("http://") or self.__repo_path.startswith("https://")
 
-    def __start_cache_reset_thread(self):
-        """
-        Start a background thread to reset the cache monthly.
-
-        This method creates and starts a daemon thread that runs the cache reset function
-        every month.
-        """
-        reset_thread = threading.Thread(target=self.__reset_cache_monthly)
-        reset_thread.daemon = True  # Daemonize thread
-        reset_thread.start()
-
-    def __reset_cache_monthly(self):
-        """
-        Periodically clears the cache on the first day of each month.
-
-        This method runs in a background thread and calculates the time until the start
-        of the next month. It sleeps until that time and then clears the cache.
-        """
-        while True:
-            time_to_sleep = self.__calculate_time_until_next_month()
-            time.sleep(time_to_sleep)
-            self.__chapters_cache.clear()
-            print(f"Cache cleared on {datetime.now()}")
-
-    def __calculate_time_until_next_month(self):
-        """
-        Calculate the seconds until the start of the next month.
-
-        Determines how many seconds are left until the first day of the next month
-        from the current time. This duration is used by the cache reset thread to
-        sleep until the cache needs to be cleared.
-
-        :return: Number of seconds until the start of the next month.
-        """
-        now = datetime.now()
-        # Calculate the first day of the next month
-        first_of_next_month = (now.replace(day=1) + timedelta(days=32)).replace(day=1)
-        return (first_of_next_month - now).total_seconds()
-
-    def select(self, reference, abbreviation='kjv'):
+    def select(self, reference: str, abbreviation: Optional[str] = 'kjv') -> Dict[str, Union[Dict, str]]:
         """
         Select and return Bible verses based on the reference and abbreviation.
 
@@ -81,13 +45,13 @@ class GetBible:
             try:
                 reference = self.__get.ref(ref, abbreviation)
             except ValueError:
-                raise ValueError(f"Invalid reference format.")
+                raise ValueError(f"Invalid reference '{ref}'.")
 
             self.__set_verse(abbreviation, reference.book, reference.chapter, reference.verses, result)
 
         return result
 
-    def scripture(self, reference, abbreviation='kjv'):
+    def scripture(self, reference: str, abbreviation: Optional[str] = 'kjv') -> str:
         """
         Select and return Bible verses based on the reference and abbreviation.
 
@@ -98,7 +62,72 @@ class GetBible:
 
         return json.dumps(self.select(reference, abbreviation))
 
-    def __set_verse(self, abbreviation, book, chapter, verses, result):
+    def valid_reference(self, reference: str, abbreviation: Optional[str] = 'kjv') -> bool:
+        """
+        Validate a scripture reference and check its presence in the cache.
+
+        :param reference: Scripture reference string.
+        :param abbreviation: Optional translation code.
+        :return: True if valid and present, False otherwise.
+        """
+        return self.__get.valid(reference, abbreviation)
+
+    def valid_translation(self, abbreviation: str) -> bool:
+        """
+        Check if the given translation is valid.
+
+        :param abbreviation: The abbreviation of the Bible translation to check.
+        :return: True if the translation is available, False otherwise.
+        """
+        if self.__pattern.match(abbreviation):
+            path = self.__generate_path(abbreviation, "books.json")
+            # Check if the translation is already in the cache
+            if abbreviation not in self.__books_cache:
+                self.__books_cache[abbreviation] = self.__fetch_data(path)
+            # Return True if the translation is available, False otherwise
+            return self.__books_cache[abbreviation] is not None
+        return False
+
+    def __start_cache_reset_thread(self) -> None:
+        """
+        Start a background thread to reset the cache monthly.
+
+        This method creates and starts a daemon thread that runs the cache reset function
+        every month.
+        """
+        reset_thread = threading.Thread(target=self.__reset_cache_monthly)
+        reset_thread.daemon = True  # Daemonize thread
+        reset_thread.start()
+
+    def __reset_cache_monthly(self) -> None:
+        """
+        Periodically clears the cache on the first day of each month.
+
+        This method runs in a background thread and calculates the time until the start
+        of the next month. It sleeps until that time and then clears the cache.
+        """
+        while True:
+            time_to_sleep = self.__calculate_time_until_next_month()
+            time.sleep(time_to_sleep)
+            self.__chapters_cache.clear()
+            print(f"Cache cleared on {datetime.now()}")
+
+    def __calculate_time_until_next_month(self) -> float:
+        """
+        Calculate the seconds until the start of the next month.
+
+        Determines how many seconds are left until the first day of the next month
+        from the current time. This duration is used by the cache reset thread to
+        sleep until the cache needs to be cleared.
+
+        :return: Number of seconds until the start of the next month.
+        """
+        now = datetime.now()
+        # Calculate the first day of the next month
+        first_of_next_month = (now.replace(day=1) + timedelta(days=32)).replace(day=1)
+        return (first_of_next_month - now).total_seconds()
+
+    def __set_verse(self, abbreviation: str, book: int, chapter: int, verses: list, result: Dict) -> None:
         """
         Set verse information into the result JSON.
         :param abbreviation: Bible translation abbreviation.
@@ -131,20 +160,18 @@ class GetBible:
                 result[cache_key] = {key: chapter_data[key] for key in chapter_data if key != "verses"}
                 result[cache_key]["verses"] = [verse_info]
 
-    def __check_translation(self, abbreviation):
+    def __check_translation(self, abbreviation: str) -> None:
         """
-        Check if the given translation is available.
+        Check if the given translation is available and raises an exception if not found.
 
         :param abbreviation: The abbreviation of the Bible translation to check.
         :raises FileNotFoundError: If the translation is not found.
         """
-        path = self.__generate_path(abbreviation, "books.json")
-        if abbreviation not in self.__books_cache:
-            self.__books_cache[abbreviation] = self.__fetch_data(path)
-            if self.__books_cache[abbreviation] is None:
-                raise FileNotFoundError(f"Translation ({abbreviation}) not found in this API.")
+        # Use valid_translation to check if the translation is available
+        if not self.valid_translation(abbreviation):
+            raise FileNotFoundError(f"Translation ({abbreviation}) not found in this API.")
 
-    def __generate_path(self, abbreviation, file_name):
+    def __generate_path(self, abbreviation: str, file_name: str) -> str:
         """
         Generate the path or URL for a given file.
 
@@ -157,7 +184,7 @@ class GetBible:
         else:
             return os.path.join(self.__repo_path, self.__repo_version, abbreviation, file_name)
 
-    def __fetch_data(self, path):
+    def __fetch_data(self, path: str) -> Optional[Dict]:
         """
         Fetch data from either a URL or a local file path.
 
@@ -177,7 +204,7 @@ class GetBible:
             else:
                 return None
 
-    def __retrieve_chapter_data(self, abbreviation, book, chapter):
+    def __retrieve_chapter_data(self, abbreviation: str, book: int, chapter: int) -> Dict:
         """
         Retrieve chapter data for a given book and chapter.
 

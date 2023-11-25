@@ -1,31 +1,52 @@
 from .trie_node import TrieNode
 import json
 import re
+from typing import Dict, Optional
 
 
 class GetBibleReferenceTrie:
-    def __init__(self):
+    def __init__(self) -> None:
+        """
+        Initialize the GetBibleReferenceTrie class.
+
+        Sets up the Trie data structure for storing and searching book names.
+        """
         self.root = TrieNode()
-        # Updated regex to support Unicode characters
         self.space_removal_regex = re.compile(r'(\d)\s+(\w)', re.UNICODE)
 
-    def _preprocess(self, name):
-        # Remove all periods
+    def __preprocess(self, name: str) -> str:
+        """
+        Preprocess a book name by removing periods and spaces between numbers and words.
+
+        :param name: The book name to preprocess.
+        :return: The processed name in lowercase.
+        """
         processed_name = name.replace('.', '')
-        # Process the name considering Unicode characters
         processed_name = self.space_removal_regex.sub(r'\1\2', processed_name)
         return processed_name.lower()
 
-    def _insert(self, book_number, names):
+    def __insert(self, book_number: str, names: [str]) -> None:
+        """
+        Insert a book number with associated names into the Trie.
+
+        :param book_number: The book number to insert.
+        :param names: A list of names associated with the book number.
+        """
         for name in names:
-            processed_name = self._preprocess(name)
+            processed_name = self.__preprocess(name)
             node = self.root
             for char in processed_name:
                 node = node.children.setdefault(char, TrieNode())
             node.book_number = book_number
 
-    def search(self, book_name):
-        processed_name = self._preprocess(book_name)
+    def search(self, book_name: str) -> Optional[str]:
+        """
+        Search for a book number based on a book name.
+
+        :param book_name: The book name to search for.
+        :return: The book number if found, None otherwise.
+        """
+        processed_name = self.__preprocess(book_name)
         node = self.root
         for char in processed_name:
             node = node.children.get(char)
@@ -33,7 +54,14 @@ class GetBibleReferenceTrie:
                 return None
         return node.book_number if node.book_number else None
 
-    def _dump_to_dict(self, node=None, key=''):
+    def __dump_to_dict(self, node: Optional[TrieNode] = None, key: str = '') -> Dict[str, Dict]:
+        """
+        Convert the Trie into a dictionary representation.
+
+        :param node: The current Trie node to process.
+        :param key: The current key being constructed.
+        :return: Dictionary representation of the Trie.
+        """
         if node is None:
             node = self.root
 
@@ -42,21 +70,34 @@ class GetBibleReferenceTrie:
             result[key] = {'book_number': node.book_number}
 
         for char, child in node.children.items():
-            result.update(self._dump_to_dict(child, key + char))
+            result.update(self.__dump_to_dict(child, key + char))
 
         return result
 
-    def dump(self, filename):
-        trie_dict = self._dump_to_dict()
+    def dump(self, filename: str) -> None:
+        """
+        Dump the Trie data to a JSON file.
+
+        :param filename: The filename to dump the data to.
+        """
+        trie_dict = self.__dump_to_dict()
         with open(filename, 'w') as file:
             json.dump(trie_dict, file, ensure_ascii=False, indent=4)
 
-    def load(self, file_path):
+    def load(self, file_path: str) -> None:
+        """
+        Load the Trie data from a JSON file.
+
+        :param file_path: The path of the file to load data from.
+        :raises IOError: If there is an error opening the file.
+        :raises ValueError: If there is an error decoding the JSON data.
+        :raises Exception: If any other error occurs.
+        """
         try:
             with open(file_path, 'r') as file:
                 data = json.load(file)
                 for book_number, names in data.items():
-                    self._insert(book_number, names)
+                    self.__insert(book_number, names)
         except IOError as e:
             raise IOError(f"Error loading file {file_path}: {e}")
         except json.JSONDecodeError as e:

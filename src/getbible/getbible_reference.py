@@ -1,6 +1,7 @@
 import re
 from getbible import GetBibleBookNumber
 from dataclasses import dataclass
+from typing import Optional, Tuple
 
 
 @dataclass
@@ -11,60 +12,156 @@ class BookReference:
 
 
 class GetBibleReference:
-
     def __init__(self):
         self.__get_book = GetBibleBookNumber()
+        self.__pattern = re.compile(r'^[\w\s,:-]{1,50}$', re.UNICODE)
+        self.cache = {}
+        self.cache_limit = 5000
 
-    def ref(self, reference, translation_code=None):
-        # Split at the first colon to separate book from verses, defaulting to chapter 1, verse 1 if not present
-        book_chapter, verses_portion = reference.split(':', 1) if ':' in reference else (reference, '1')
-        # Try to extract the chapter number from the book_chapter part
+    def ref(self, reference: str, translation_code: Optional[str] = None) -> BookReference:
+        """
+        Fetch the BookReference from cache or create it if not present.
+
+        :param reference: Scripture reference string.
+        :param translation_code: Optional translation code.
+        :return: BookReference object.
+        :raises ValueError: If reference is invalid.
+        """
+        sanitized_ref = self.__sanitize(reference)
+        if not sanitized_ref:
+            raise ValueError(f"Invalid reference '{reference}'.")
+        if sanitized_ref not in self.cache:
+            book_ref = self.__book_reference(reference, translation_code)
+            if book_ref is None:
+                raise ValueError(f"Invalid reference '{reference}'.")
+            self.__manage_local_cache(sanitized_ref, book_ref)
+        return self.cache[sanitized_ref]
+
+    def valid(self, reference: str, translation_code: Optional[str] = None) -> bool:
+        """
+        Validate a scripture reference and check its presence in the cache.
+
+        :param reference: Scripture reference string.
+        :param translation_code: Optional translation code.
+        :return: True if valid and present, False otherwise.
+        """
+        sanitized_ref = self.__sanitize(reference)
+        if sanitized_ref is None:
+            return False
+        if sanitized_ref not in self.cache:
+            book_ref = self.__book_reference(reference, translation_code)
+            self.__manage_local_cache(sanitized_ref, book_ref)
+        return self.cache[sanitized_ref] is not None
+
+    def __sanitize(self, reference: str) -> Optional[str]:
+        """
+        Sanitize a scripture reference by validating and escaping it.
+
+        :param reference: The scripture reference to sanitize.
+        :return: Sanitized reference or None if invalid.
+        """
+        if self.__pattern.match(reference):
+            return re.escape(reference)
+        return None
+
+    def __book_reference(self, reference: str, translation_code: Optional[str] = None) -> Optional[BookReference]:
+        """
+        Create a BookReference object from a scripture reference.
+
+        :param reference: Scripture reference string.
+        :param translation_code: Optional translation code.
+        :return: BookReference object or None if invalid.
+        """
+        try:
+            book_chapter, verses_portion = self.__split_reference(reference)
+            book_name = self.__extract_book_name(book_chapter)
+            book_number = self.__get_book_number(book_name, translation_code)
+            if not book_number:
+                return None
+            verses_arr = self.__get_verses_numbers(verses_portion)
+            chapter_number = self.__extract_chapter(book_chapter)
+            return BookReference(book=int(book_number), chapter=chapter_number, verses=verses_arr)
+        except Exception:
+            return None
+
+    def __split_reference(self, reference: str) -> Tuple[str, str]:
+        """
+        Split a scripture reference into book chapter and verses portion.
+
+        :param reference: Scripture reference string.
+        :return: Tuple of book chapter and verses portion.
+        """
+        return reference.split(':', 1) if ':' in reference else (reference, '1')
+
+    def __extract_chapter(self, book_chapter: str) -> int:
+        """
+        Extract the chapter number from the book chapter part.
+
+        :param book_chapter: Book chapter part of the reference.
+        :return: Extracted chapter number.
+        """
         chapter_match = re.search(r'\d+$', book_chapter)
-        if chapter_match:
-            # If a chapter number is found, extract it and the book name
-            chapter_number = int(chapter_match.group())
-            book_name = book_chapter[:chapter_match.start()].strip()
-        else:
-            # If no chapter number is found, default to chapter 1
-            chapter_number = 1
-            book_name = book_chapter.strip()
-        # Retrieve the book number
-        book_number = self.__get_book_number(book_name, translation_code)
-        if not book_number:
-            raise ValueError(f"Book number for '{book_name}' could not be found.")
-        # Extract verses
-        verses_arr = self.__get_verses_numbers(verses_portion.strip())
-        # We return a dataclass (needs Python 3.7+)
-        return BookReference(book=int(book_number), chapter=chapter_number, verses=verses_arr)
+        return int(chapter_match.group()) if chapter_match else 1
 
-    def __get_verses_numbers(self, verses):
+    def __extract_book_name(self, book_chapter: str) -> str:
+        """
+        Extract the book name from the book chapter part.
+
+        :param book_chapter: Book chapter part of the reference.
+        :return: Extracted book name.
+        """
+        if book_chapter.isdigit():
+            # If the entire string is numeric, return it as is
+            return book_chapter
+
+        chapter_match = re.search(r'\d+$', book_chapter)
+        return book_chapter[:chapter_match.start()].strip() if chapter_match else book_chapter.strip()
+
+    def __get_verses_numbers(self, verses: str) -> list:
+        """
+        Convert a verses portion of a reference into a list of verse numbers.
+
+        :param verses: Verses portion of the reference.
+        :return: List of verse numbers.
+        """
         if not verses:
             return [1]
-        # Process a string of verses into a list
         verse_parts = verses.split(',')
         verse_list = []
         for part in verse_parts:
             if '-' in part:
                 range_parts = part.split('-')
-                # Ignore if neither start nor end are digits
-                if len(range_parts) == 2:
-                    start, end = range_parts
-                    if start.isdigit() and end.isdigit():
-                        verse_list.extend(range(int(start), int(end) + 1))
-                    elif start.isdigit():
-                        verse_list.append(int(start))
-                elif len(range_parts) == 1 and range_parts[0].isdigit():
+                if all(rp.isdigit() for rp in range_parts):
+                    start, end = sorted(map(int, range_parts))
+                    verse_list.extend(range(start, end + 1))
+                elif len(range_parts) == 2 and range_parts[0].isdigit() and not range_parts[1]:
                     verse_list.append(int(range_parts[0]))
+                elif len(range_parts) == 2 and range_parts[1].isdigit() and not range_parts[0]:
+                    verse_list.append(int(range_parts[1]))
             elif part.isdigit():
                 verse_list.append(int(part))
-        if not verse_list:
-            return [1]
-        return verse_list
+        return verse_list if verse_list else [1]
 
-    def __get_book_number(self, book_name, abbreviation):
-        # Retrieve the book number given a translation abbreviation and a book name
-        if re.match(r'^[0-9]+$', book_name):
-            return book_name
+    def __get_book_number(self, book_name: str, abbreviation: Optional[str]) -> Optional[int]:
+        """
+        Retrieve the book number given a book name and translation abbreviation.
+
+        :param book_name: Name of the book.
+        :param abbreviation: Translation abbreviation.
+        :return: Book number or None if not found.
+        """
+        if book_name.isdigit():
+            return int(book_name)
         book_number = self.__get_book.number(book_name, abbreviation)
-        return book_number
+        return int(book_number) if book_number is not None else None
 
+    def __manage_local_cache(self, key: str, value: Optional[BookReference]):
+        """
+        Manage the insertion and eviction policy for the cache.
+
+        :param key: The key to insert into the cache.
+        :param value: The value to associate with the key.
+        """
+        if len(self.cache) >= self.cache_limit:
+            self.cache.pop(next(iter(self.cache)))  # Evict the oldest cache item
+        self.cache[key] = value
