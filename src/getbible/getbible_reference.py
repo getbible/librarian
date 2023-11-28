@@ -9,14 +9,15 @@ class BookReference:
     book: int
     chapter: int
     verses: list
+    reference: str
 
 
 class GetBibleReference:
     def __init__(self):
         self.__get_book = GetBibleBookNumber()
         self.__pattern = re.compile(r'^[\w\s,:-]{1,50}$', re.UNICODE)
-        self.cache = {}
-        self.cache_limit = 5000
+        self.__cache = {}
+        self.__cache_limit = 5000
 
     def ref(self, reference: str, translation_code: Optional[str] = None) -> BookReference:
         """
@@ -30,12 +31,12 @@ class GetBibleReference:
         sanitized_ref = self.__sanitize(reference)
         if not sanitized_ref:
             raise ValueError(f"Invalid reference '{reference}'.")
-        if sanitized_ref not in self.cache:
+        if sanitized_ref not in self.__cache:
             book_ref = self.__book_reference(reference, translation_code)
             if book_ref is None:
                 raise ValueError(f"Invalid reference '{reference}'.")
             self.__manage_local_cache(sanitized_ref, book_ref)
-        return self.cache[sanitized_ref]
+        return self.__cache[sanitized_ref]
 
     def valid(self, reference: str, translation_code: Optional[str] = None) -> bool:
         """
@@ -48,10 +49,10 @@ class GetBibleReference:
         sanitized_ref = self.__sanitize(reference)
         if sanitized_ref is None:
             return False
-        if sanitized_ref not in self.cache:
+        if sanitized_ref not in self.__cache:
             book_ref = self.__book_reference(reference, translation_code)
             self.__manage_local_cache(sanitized_ref, book_ref)
-        return self.cache[sanitized_ref] is not None
+        return self.__cache[sanitized_ref] is not None
 
     def __sanitize(self, reference: str) -> Optional[str]:
         """
@@ -80,7 +81,7 @@ class GetBibleReference:
                 return None
             verses_arr = self.__get_verses_numbers(verses_portion)
             chapter_number = self.__extract_chapter(book_chapter)
-            return BookReference(book=int(book_number), chapter=chapter_number, verses=verses_arr)
+            return BookReference(book=int(book_number), chapter=chapter_number, verses=verses_arr, reference=reference)
         except Exception:
             return None
 
@@ -112,7 +113,7 @@ class GetBibleReference:
         """
         if book_chapter.isdigit():
             # If the entire string is numeric, return it as is
-            return book_chapter
+            return book_chapter.strip()
 
         chapter_match = re.search(r'\d+$', book_chapter)
         return book_chapter[:chapter_match.start()].strip() if chapter_match else book_chapter.strip()
@@ -150,10 +151,7 @@ class GetBibleReference:
         :param abbreviation: Translation abbreviation.
         :return: Book number or None if not found.
         """
-        if book_name.isdigit():
-            return int(book_name)
-        book_number = self.__get_book.number(book_name, abbreviation)
-        return int(book_number) if book_number is not None else None
+        return self.__get_book.number(book_name, abbreviation)
 
     def __manage_local_cache(self, key: str, value: Optional[BookReference]):
         """
@@ -162,6 +160,6 @@ class GetBibleReference:
         :param key: The key to insert into the cache.
         :param value: The value to associate with the key.
         """
-        if len(self.cache) >= self.cache_limit:
-            self.cache.pop(next(iter(self.cache)))  # Evict the oldest cache item
-        self.cache[key] = value
+        if len(self.__cache) >= self.__cache_limit:
+            self.__cache.pop(next(iter(self.__cache)))  # Evict the oldest cache item
+        self.__cache[key] = value

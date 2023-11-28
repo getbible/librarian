@@ -7,6 +7,7 @@ import time
 from datetime import datetime, timedelta
 from typing import Dict, Optional, Union
 from getbible import GetBibleReference
+from getbible import BookReference
 
 
 class GetBible:
@@ -26,6 +27,7 @@ class GetBible:
         self.__books_cache = {}
         self.__chapters_cache = {}
         self.__start_cache_reset_thread()
+        # Pattern to check valid translations names
         self.__pattern = re.compile(r'^[a-zA-Z0-9]{1,30}$')
         # Determine if the repository path is a URL
         self.__repo_path_url = self.__repo_path.startswith("http://") or self.__repo_path.startswith("https://")
@@ -43,11 +45,11 @@ class GetBible:
         references = reference.split(';')
         for ref in references:
             try:
-                reference = self.__get.ref(ref, abbreviation)
+                book_reference = self.__get.ref(ref, abbreviation)
             except ValueError:
                 raise ValueError(f"Invalid reference '{ref}'.")
 
-            self.__set_verse(abbreviation, reference.book, reference.chapter, reference.verses, result)
+            self.__set_verse(abbreviation, book_reference, result)
 
         return result
 
@@ -127,18 +129,16 @@ class GetBible:
         first_of_next_month = (now.replace(day=1) + timedelta(days=32)).replace(day=1)
         return (first_of_next_month - now).total_seconds()
 
-    def __set_verse(self, abbreviation: str, book: int, chapter: int, verses: list, result: Dict) -> None:
+    def __set_verse(self, abbreviation: str, book_ref: BookReference, result: Dict) -> None:
         """
         Set verse information into the result JSON.
         :param abbreviation: Bible translation abbreviation.
-        :param book: The book of the Bible.
-        :param chapter: The chapter number.
-        :param verses: List of verse numbers.
+        :param book_ref: The book reference class.
         :param result: The dictionary to store verse information.
         """
-        cache_key = f"{abbreviation}_{book}_{chapter}"
+        cache_key = f"{abbreviation}_{book_ref.book}_{book_ref.chapter}"
         if cache_key not in self.__chapters_cache:
-            chapter_data = self.__retrieve_chapter_data(abbreviation, book, chapter)
+            chapter_data = self.__retrieve_chapter_data(abbreviation, book_ref.book, book_ref.chapter)
             # Convert verses list to dictionary for faster lookup
             verse_dict = {str(v["verse"]): v for v in chapter_data.get("verses", [])}
             chapter_data["verses"] = verse_dict
@@ -146,18 +146,22 @@ class GetBible:
         else:
             chapter_data = self.__chapters_cache[cache_key]
 
-        for verse in verses:
+        for verse in book_ref.verses:
             verse_info = chapter_data["verses"].get(str(verse))
             if not verse_info:
-                raise ValueError(f"Verse {verse} not found in book {book}, chapter {chapter}.")
+                raise ValueError(f"Verse {verse} not found in book {book_ref.book}, chapter {book_ref.chapter}.")
 
             if cache_key in result:
                 existing_verses = {str(v["verse"]) for v in result[cache_key].get("verses", [])}
                 if str(verse) not in existing_verses:
                     result[cache_key]["verses"].append(verse_info)
+                existing_ref = result[cache_key].get("ref", [])
+                if str(book_ref.reference) not in existing_ref:
+                    result[cache_key]["ref"].append(book_ref.reference)
             else:
                 # Include all other relevant elements of your JSON structure
                 result[cache_key] = {key: chapter_data[key] for key in chapter_data if key != "verses"}
+                result[cache_key]["ref"] = [book_ref.reference]
                 result[cache_key]["verses"] = [verse_info]
 
     def __check_translation(self, abbreviation: str) -> None:
@@ -169,7 +173,7 @@ class GetBible:
         """
         # Use valid_translation to check if the translation is available
         if not self.valid_translation(abbreviation):
-            raise FileNotFoundError(f"Translation ({abbreviation}) not found in this API.")
+            raise FileNotFoundError(f"Translation ({abbreviation}) not found.")
 
     def __generate_path(self, abbreviation: str, file_name: str) -> str:
         """
@@ -210,7 +214,7 @@ class GetBible:
 
         :param abbreviation: Bible translation abbreviation.
         :param book: The book of the Bible.
-        :param chapter: The chapter number.
+        :param chapter: The chapter.
         :return: Chapter data.
         :raises FileNotFoundError: If the chapter data is not found.
         """
@@ -218,5 +222,5 @@ class GetBible:
                                                                                                f"{chapter}.json")
         chapter_data = self.__fetch_data(self.__generate_path(abbreviation, chapter_file))
         if chapter_data is None:
-            raise FileNotFoundError(f"File {abbreviation}/{book}/{chapter}.json does not exist.")
+            raise FileNotFoundError(f"Chapter:{chapter} in book:{book} for {abbreviation} not found.")
         return chapter_data

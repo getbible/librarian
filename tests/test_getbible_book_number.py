@@ -47,6 +47,23 @@ class TestGetBibleBookNumber(unittest.TestCase):
         actual_result = self.get_book.number('First John', 'kjv')
         self.assertEqual(actual_result, expected_result, "Failed to find 'First John' in 'kjv' translation")
 
+    def test_valid_1_john(self):
+        expected_result = 62
+        actual_result = self.get_book.number('62', 'kjv')
+        self.assertEqual(actual_result, expected_result, "Failed to find '62' in 'kjv' translation")
+
+    def test_wrong_book_number(self):
+        actual_result = self.get_book.number('84', 'kjv')
+        self.assertIsNone(actual_result, "Failed to limit the books in 'kjv' translation to 1-83")
+
+    def test_wrong_book_number_zero(self):
+        actual_result = self.get_book.number('0', 'kjv')
+        self.assertIsNone(actual_result, "Failed to limit the books in 'kjv' translation to 1-83")
+
+    def test_wrong_book_number_minus(self):
+        actual_result = self.get_book.number('-19', 'kjv')
+        self.assertIsNone(actual_result, "Failed to limit the books in 'kjv' translation to 1-83")
+
     def test_valid_mismatch_nospace_call(self):
         expected_result = 62
         actual_result = self.get_book.number('1Jn', 'aov')

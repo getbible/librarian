@@ -13,7 +13,7 @@ class TestGetBible(unittest.TestCase):
         expected_result = {
             "kjv_1_1": {"translation": "King James Version", "abbreviation": "kjv", "lang": "en", "language": "English",
                         "direction": "LTR", "encoding": "UTF-8", "book_nr": 1, "book_name": "Genesis", "chapter": 1,
-                        "name": "Genesis 1", "verses": [{"chapter": 1, "verse": 2, "name": "Genesis 1:2",
+                        "name": "Genesis 1", "ref": ["Gen 1:2-7"], "verses": [{"chapter": 1, "verse": 2, "name": "Genesis 1:2",
                                                          "text": "And the earth was without form and void; and darkness was upon the face of the deep. And the Spirit of God moved upon the face of the waters."},
                                                         {"chapter": 1, "verse": 3, "name": "Genesis 1:3",
                                                          "text": "And God said, Let there be light: and there was light."},
@@ -33,7 +33,7 @@ class TestGetBible(unittest.TestCase):
             "cns_1_1": {"translation": "NCV Simplified", "abbreviation": "cns", "lang": "zh-Hans",
                         "language": "Chinese",
                         "direction": "LTR", "encoding": "UTF-8", "book_nr": 1, "book_name": "\ufeff\u521b\u4e16\u8bb0",
-                        "chapter": 1, "name": "\ufeff\u521b\u4e16\u8bb0 1", "verses": [
+                        "chapter": 1, "name": "\ufeff\u521b\u4e16\u8bb0 1", "ref": ["创世记1:2-7"], "verses": [
                     {"chapter": 1, "verse": 2, "name": "\ufeff\u521b\u4e16\u8bb0 1:2",
                      "text": "\u5730\u662f\u7a7a\u865a\u6df7\u6c8c\uff1b\u6df1\u6e0a\u4e0a\u4e00\u7247\u9ed1\u6697\uff1b\u3000\u795e\u7684\u7075\u8fd0\u884c\u5728\u6c34\u9762\u4e0a\u3002 "},
                     {"chapter": 1, "verse": 3, "name": "\ufeff\u521b\u4e16\u8bb0 1:3",
@@ -53,15 +53,15 @@ class TestGetBible(unittest.TestCase):
         expected_result = {
             "aov_1_1": {"translation": "Ou Vertaling", "abbreviation": "aov", "lang": "af", "language": "Afrikaans",
                         "direction": "LTR", "encoding": "UTF-8", "book_nr": 1, "book_name": "Genesis", "chapter": 1,
-                        "name": "Genesis 1", "verses": [{"chapter": 1, "verse": 1, "name": "Genesis 1:1",
+                        "name": "Genesis 1", "ref": ['Ge1:1'], "verses": [{"chapter": 1, "verse": 1, "name": "Genesis 1:1",
                                                          "text": "In die begin het God die hemel en die aarde geskape. "}]},
             "aov_43_1": {"translation": "Ou Vertaling", "abbreviation": "aov", "lang": "af", "language": "Afrikaans",
                          "direction": "LTR", "encoding": "UTF-8", "book_nr": 43, "book_name": "Johannes", "chapter": 1,
-                         "name": "Johannes 1", "verses": [{"chapter": 1, "verse": 1, "name": "Johannes 1:1",
+                         "name": "Johannes 1", "ref": ['Jn1:1'], "verses": [{"chapter": 1, "verse": 1, "name": "Johannes 1:1",
                                                            "text": "In die begin was die Woord, en die Woord was by God, en die Woord was God. "}]},
             "aov_62_1": {"translation": "Ou Vertaling", "abbreviation": "aov", "lang": "af", "language": "Afrikaans",
                          "direction": "LTR", "encoding": "UTF-8", "book_nr": 62, "book_name": "1 Johannes",
-                         "chapter": 1, "name": "1 Johannes 1", "verses": [
+                         "chapter": 1, "name": "1 Johannes 1", "ref": ["1Jn1:1"], "verses": [
                     {"chapter": 1, "verse": 1, "name": "1 Johannes 1:1",
                      "text": "Wat van die begin af was, wat ons gehoor het, wat ons met ons o\u00eb gesien het, wat ons aanskou het en ons hande getas het aangaande die Woord van die lewe \u2014 "}]}}
         self.assertEqual(actual_result, expected_result, "Failed to find 'Ge1:1;Jn1:1;1Jn1:1' scripture.")
@@ -79,6 +79,7 @@ class TestGetBible(unittest.TestCase):
                             'language': 'Hebrew',
                             'name': 'תְּהִלִּים 1',
                             'translation': 'Aleppo Codex',
+                            'ref': ['Ps1:1', 'ps1:1-2'],
                             'verses': [{'chapter': 1,
                                         'name': 'תְּהִלִּים 1:1',
                                         'text': '\xa0\xa0אשרי האיש— \xa0\xa0 אשר לא הלך '
@@ -100,6 +101,7 @@ class TestGetBible(unittest.TestCase):
                            'language': 'Hebrew',
                            'name': 'בְּרֵאשִׁית 1',
                            'translation': 'Aleppo Codex',
+                           'ref': ['Ge1:1-3', 'Ge1:6-7,10'],
                            'verses': [{'chapter': 1,
                                        'name': 'בְּרֵאשִׁית 1:1',
                                        'text': 'בראשית ברא אלהים את השמים ואת הארץ ',
@@ -134,6 +136,35 @@ class TestGetBible(unittest.TestCase):
 
         self.assertEqual(actual_result, expected_result, "Failed to find 'Ge1:1-3;Ps1:1;ps1:1-2;Ge1:6-7,1' scripture.")
 
+    def test_invalid_reference_select_aleppo(self):
+        expected_exception = "Chapter:111 in book:1 for aleppo not found."
+        with self.assertRaises(FileNotFoundError) as actual:
+            self.getbible.select('Ge111', 'aleppo')
+        self.assertEqual(str(actual.exception), expected_exception)
+
+    def test_invalid_reference_select_kjv(self):
+        expected_exception = "Verse 111 not found in book 1, chapter 1."
+        with self.assertRaises(ValueError) as actual:
+            self.getbible.select('Ge 1:111', 'kjv')
+        self.assertEqual(str(actual.exception), expected_exception)
+
+    def test_invalid_double_dash_reference_select_kjv(self):
+        expected_exception = "Invalid reference 'Ge 1:1-7-11'."
+        with self.assertRaises(ValueError) as actual:
+            self.getbible.select('Ge 1:1-7-11', 'kjv')
+        self.assertEqual(str(actual.exception), expected_exception)
+
+    def test_invalid_verse_reference_select_kjv(self):
+        expected_exception = "Verse 32 not found in book 1, chapter 1."
+        with self.assertRaises(ValueError) as actual:
+            self.getbible.select('1 1:1-80', 'kjv')
+        self.assertEqual(str(actual.exception), expected_exception)
+
+    def test_invalid_book_reference_select_kjv(self):
+        expected_exception = "Invalid reference '112 1:1-80'."
+        with self.assertRaises(ValueError) as actual:
+            self.getbible.select('112 1:1-80', 'kjv')
+        self.assertEqual(str(actual.exception), expected_exception)
 
 if __name__ == '__main__':
     unittest.main()

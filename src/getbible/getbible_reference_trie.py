@@ -11,8 +11,8 @@ class GetBibleReferenceTrie:
 
         Sets up the Trie data structure for storing and searching book names.
         """
-        self.root = TrieNode()
-        self.space_removal_regex = re.compile(r'(\d)\s+(\w)', re.UNICODE)
+        self.__root = TrieNode()
+        self.__space_removal_regex = re.compile(r'(\d)\s+(\w)', re.UNICODE)
 
     def __preprocess(self, name: str) -> str:
         """
@@ -22,7 +22,7 @@ class GetBibleReferenceTrie:
         :return: The processed name in lowercase.
         """
         processed_name = name.replace('.', '')
-        processed_name = self.space_removal_regex.sub(r'\1\2', processed_name)
+        processed_name = self.__space_removal_regex.sub(r'\1\2', processed_name)
         return processed_name.lower()
 
     def __insert(self, book_number: str, names: [str]) -> None:
@@ -34,7 +34,7 @@ class GetBibleReferenceTrie:
         """
         for name in names:
             processed_name = self.__preprocess(name)
-            node = self.root
+            node = self.__root
             for char in processed_name:
                 node = node.children.setdefault(char, TrieNode())
             node.book_number = book_number
@@ -47,7 +47,7 @@ class GetBibleReferenceTrie:
         :return: The book number if found, None otherwise.
         """
         processed_name = self.__preprocess(book_name)
-        node = self.root
+        node = self.__root
         for char in processed_name:
             node = node.children.get(char)
             if node is None:
@@ -63,7 +63,7 @@ class GetBibleReferenceTrie:
         :return: Dictionary representation of the Trie.
         """
         if node is None:
-            node = self.root
+            node = self.__root
 
         result = {}
         if node.book_number is not None:
