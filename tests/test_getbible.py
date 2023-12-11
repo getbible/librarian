@@ -67,7 +67,7 @@ class TestGetBible(unittest.TestCase):
         self.assertEqual(actual_result, expected_result, "Failed to find 'Ge1:1;Jn1:1;1Jn1:1' scripture.")
 
     def test_valid_multiple_reference_select_aleppo(self):
-        actual_result = self.getbible.select('Ge1:1-3;Ps1:1;ps1:1-2;Ge1:6-7,10', 'aleppo')
+        actual_result = self.getbible.select('ברא 1:1-3;תה 1:1;תה1:1-2;בְּרֵאשִׁית 1:6-7,10', 'aleppo')
         expected_result = {
             'aleppo_19_1': {'abbreviation': 'aleppo',
                             'book_name': 'תְּהִלִּים',
@@ -79,7 +79,7 @@ class TestGetBible(unittest.TestCase):
                             'language': 'Hebrew',
                             'name': 'תְּהִלִּים 1',
                             'translation': 'Aleppo Codex',
-                            'ref': ['Ps1:1', 'ps1:1-2'],
+                            'ref': ['תה 1:1', 'תה1:1-2'],
                             'verses': [{'chapter': 1,
                                         'name': 'תְּהִלִּים 1:1',
                                         'text': '\xa0\xa0אשרי האיש— \xa0\xa0 אשר לא הלך '
@@ -101,7 +101,7 @@ class TestGetBible(unittest.TestCase):
                            'language': 'Hebrew',
                            'name': 'בְּרֵאשִׁית 1',
                            'translation': 'Aleppo Codex',
-                           'ref': ['Ge1:1-3', 'Ge1:6-7,10'],
+                           'ref': ['ברא 1:1-3', 'בְּרֵאשִׁית 1:6-7,10'],
                            'verses': [{'chapter': 1,
                                        'name': 'בְּרֵאשִׁית 1:1',
                                        'text': 'בראשית ברא אלהים את השמים ואת הארץ ',

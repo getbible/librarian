@@ -5,7 +5,7 @@ with open('README.md', 'r', encoding='utf-8') as f:
 
 setup(
     name="getbible",
-    version="1.1.1",
+    version="1.1.2",
     author="Llewellyn van der Merwe",
     author_email="getbible@vdm.io",
     description="A Python package to retrieving Bible references with ease.",

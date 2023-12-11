@@ -28,7 +28,7 @@ class GetBible:
         self.__chapters_cache = {}
         self.__start_cache_reset_thread()
         # Pattern to check valid translations names
-        self.__pattern = re.compile(r'^[a-zA-Z0-9]{1,30}$')
+        self.__pattern = re.compile(r'[a-zA-Z0-9]{1,30}')
         # Determine if the repository path is a URL
         self.__repo_path_url = self.__repo_path.startswith("http://") or self.__repo_path.startswith("https://")
 
