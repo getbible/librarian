@@ -37,6 +37,16 @@ class TestGetBibleBookNumber(unittest.TestCase):
         actual_result = self.get_book.number('1 John', 'kjv')
         self.assertEqual(actual_result, expected_result, "Failed to find '1 John' in 'kjv' translation")
 
+    def test_valid_genesis(self):
+        expected_result = 1
+        actual_result = self.get_book.number('בְּרֵאשִׁית', 'codex')
+        self.assertEqual(actual_result, expected_result, "Failed to find 'בְּרֵאשִׁית' in 'codex' translation")
+
+    def test_valid_1_samuel(self):
+        expected_result = 9
+        actual_result = self.get_book.number("שמא",'aleppo')
+        self.assertEqual(actual_result, expected_result, "Failed to find 'שמא' in 'aleppo' translation")
+
     def test_valid_1_peter_ch(self):
         expected_result = 60
         actual_result = self.get_book.number('彼得前书', 'cns')
@@ -47,7 +57,7 @@ class TestGetBibleBookNumber(unittest.TestCase):
         actual_result = self.get_book.number('First John', 'kjv')
         self.assertEqual(actual_result, expected_result, "Failed to find 'First John' in 'kjv' translation")
 
-    def test_valid_1_john(self):
+    def test_valid_one_john(self):
         expected_result = 62
         actual_result = self.get_book.number('62', 'kjv')
         self.assertEqual(actual_result, expected_result, "Failed to find '62' in 'kjv' translation")

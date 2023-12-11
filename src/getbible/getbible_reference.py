@@ -15,7 +15,7 @@ class BookReference:
 class GetBibleReference:
     def __init__(self):
         self.__get_book = GetBibleBookNumber()
-        self.__pattern = re.compile(r'^[\w\s,:-]{1,50}$', re.UNICODE)
+        self.__pattern = re.compile(r'[\w\s,:-]{1,50}', re.UNICODE)
         self.__cache = {}
         self.__cache_limit = 5000
 
