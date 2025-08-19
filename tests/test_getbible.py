@@ -136,6 +136,28 @@ class TestGetBible(unittest.TestCase):
 
         self.assertEqual(actual_result, expected_result, "Failed to find 'Ge1:1-3;Ps1:1;ps1:1-2;Ge1:6-7,1' scripture.")
 
+    def test_valid_single_reference_select_aleppo(self):
+        actual_result = json.loads(self.getbible.scripture('בְּרֵאשִׁית 1:26', 'aleppo'))
+        expected_result = {'aleppo_1_1': {'abbreviation': 'aleppo',
+                'book_name': 'בְּרֵאשִׁית',
+                'book_nr': 1,
+                'chapter': 1,
+                'direction': 'RTL',
+                'encoding': 'UTF-8',
+                'lang': 'hbo',
+                'language': 'Hebrew',
+                'name': 'בְּרֵאשִׁית 1',
+                'ref': ['בְּרֵאשִׁית 1:26'],
+                'translation': 'Aleppo Codex',
+                'verses': [{'chapter': 1,
+                            'name': 'בְּרֵאשִׁית 1:26',
+                            'text': 'ויאמר אלהים נעשה אדם בצלמנו כדמותנו וירדו '
+                                    'בדגת הים ובעוף השמים ובבהמה ובכל הארץ '
+                                    'ובכל הרמש הרמש על הארץ ',
+                            'verse': 26}]}}
+
+        self.assertEqual(actual_result, expected_result, "Failed to find 'בְּרֵאשִׁית 1:26' scripture.")
+
     def test_invalid_reference_select_aleppo(self):
         expected_exception = "Chapter:111 in book:1 for aleppo not found."
         with self.assertRaises(FileNotFoundError) as actual:

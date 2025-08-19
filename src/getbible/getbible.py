@@ -11,6 +11,11 @@ from getbible import BookReference
 
 
 class GetBible:
+    WORD_OPTIONS = {'allwords', 'anywords', 'exactwords'}
+    MATCH_OPTIONS = {'exactmatch', 'partialmatch'}
+    CASE_OPTIONS = {'caseinsensitive', 'casesensitive'}
+    TARGET_OPTIONS = {'allbooks', 'oldtestament', 'newtestament'} | set(map(str, range(1, 81)))
+
     def __init__(self, repo_path: str = "https://api.getbible.net", version: str = 'v2') -> None:
         """
         Initialize the GetBible class.
@@ -89,6 +94,22 @@ class GetBible:
             # Return True if the translation is available, False otherwise
             return self.__books_cache[abbreviation] is not None
         return False
+
+    def valid_limit(self, limit: str) -> bool:
+        """
+        Check if the given limit string is valid.
+
+        :param limit: The limit string to check.
+        :return: True if the limit is valid, False otherwise.
+        """
+        parts = limit.split('-')
+        if len(parts) != 4:
+            return False
+        words, match, case, target = parts
+        return (words in self.WORD_OPTIONS and
+                match in self.MATCH_OPTIONS and
+                case in self.CASE_OPTIONS and
+                target in self.TARGET_OPTIONS)
 
     def __start_cache_reset_thread(self) -> None:
         """
