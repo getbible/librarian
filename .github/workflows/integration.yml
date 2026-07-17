@@ -14,7 +14,6 @@ jobs:
     timeout-minutes: 30
     env:
       GETBIBLE_RUN_LIVE_TESTS: "1"
-      GETBIBLE_CACHE_DIR: ${{ runner.temp }}/getbible-cache
 
     steps:
       - name: Checkout
@@ -33,4 +32,6 @@ jobs:
           python -m pip install -e .
 
       - name: Run live API tests
+        env:
+          GETBIBLE_CACHE_DIR: ${{ runner.temp }}/getbible-cache
         run: python -m unittest tests.test_getbible tests.test_live_search -v
