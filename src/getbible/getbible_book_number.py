@@ -33,7 +33,7 @@ class GetBibleBookNumber:
         """
         Load all translation tries from the data directory.
         """
-        for filename in os.listdir(self.__data_path):
+        for filename in sorted(os.listdir(self.__data_path)):
             if filename.endswith('.json'):
                 self.__load_translation(filename)
 

@@ -1,6 +1,7 @@
 from .trie_node import TrieNode
 import json
 import re
+import unicodedata
 from typing import Dict, Optional
 
 
@@ -21,9 +22,10 @@ class GetBibleReferenceTrie:
         :param name: The book name to preprocess.
         :return: The processed name in lowercase.
         """
-        processed_name = name.replace('.', '')
+        processed_name = unicodedata.normalize("NFC", name).replace('.', '')
         processed_name = self.__space_removal_regex.sub(r'\1\2', processed_name)
-        return processed_name.lower()
+        processed_name = " ".join(processed_name.split())
+        return processed_name.casefold()
 
     def __insert(self, book_number: str, names: [str]) -> None:
         """
