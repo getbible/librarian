@@ -1,0 +1,23 @@
+"""Search KJV scripture and print the unified search response."""
+
+import json
+
+from getbible import GetBible, SearchCriteria
+
+
+def main() -> int:
+    bible = GetBible()
+    criteria = SearchCriteria(
+        words="all",
+        match="whole_word",
+        case_sensitive=False,
+        scope="new_testament",
+        limit=20,
+    )
+    response = bible.search("faith hope", "kjv", criteria)
+    print(json.dumps(response, ensure_ascii=False, indent=2))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

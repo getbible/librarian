@@ -1,152 +1,163 @@
 # getBible Librarian
 
-[![Stable Librarian](https://github.com/getbible/librarian/actions/workflows/stable-librarian.yml/badge.svg)](https://github.com/getbible/librarian/actions/workflows/stable-librarian.yml)
-[![GetBible Librarian](https://img.shields.io/pypi/v/getbible?style=flat-square)](https://pypi.org/project/getbible/)
+[![CI](https://github.com/getbible/librarian/actions/workflows/ci.yml/badge.svg)](https://github.com/getbible/librarian/actions/workflows/ci.yml)
+[![Live API Integration](https://github.com/getbible/librarian/actions/workflows/integration.yml/badge.svg)](https://github.com/getbible/librarian/actions/workflows/integration.yml)
+[![PyPI](https://img.shields.io/pypi/v/getbible?style=flat-square)](https://pypi.org/project/getbible/)
+[![Python](https://img.shields.io/pypi/pyversions/getbible?style=flat-square)](https://pypi.org/project/getbible/)
 
-The `getBible` Librarian package is a Python library designed for efficiently retrieving the scripture reference across various translations.
+GetBible Librarian is the Python library used to resolve scripture references, retrieve verses, and perform Unicode-aware searches against GetBible API translations. It supports standalone scripts as well as threaded and multi-process API services.
+
+- Primary project home: <https://git.vdm.dev/getBible/librarian>
+- GitHub deployment and releases: <https://github.com/getbible/librarian>
+- GetBible API v2: <https://api.getbible.net/v2/translations.json>
+- PyPI: <https://pypi.org/project/getbible/>
 
 ## Installation
 
 ```bash
-pip install getbible
+python -m pip install getbible
 ```
-> see package on [pypi](https://pypi.org/project/getbible)
 
-## Features
+Python 3.10 or newer is required.
 
-### Get Scripture
+## Retrieve scripture
 
 ```python
 import json
+
 from getbible import GetBible
 
-# Initialize the class
-getbible = GetBible()
 
-# Get the scripture as JSON
-scripture_json = getbible.scripture("Genesis 1:1")
-print(scripture_json)  # Outputs the JSON scripture as a string.
+bible = GetBible()
 
-# Get the scripture as dictionary
-scripture_dict = getbible.select("Genesis 1:1")
-print(json.dumps(scripture_dict, indent=4))  # Pretty-prints the dictionary.
+selection = bible.select("Genesis 1:1-3;John 3:16", "kjv")
+print(json.dumps(selection, ensure_ascii=False, indent=2))
+
+encoded = bible.scripture("Psalm 23:1-6", "kjv")
+print(encoded)
 ```
 
-#### Using Translation Abbreviations
+`select()` returns the established chapter-keyed dictionary. `scripture()` returns the same structure encoded as JSON.
 
-When utilizing the `GetBible` class to look up a reference, you can use the lowercase abbreviations of the target translation:
+## Search scripture
 
 ```python
 import json
+
+from getbible import GetBible, SearchCriteria
+
+
+bible = GetBible()
+criteria = SearchCriteria(
+    words="all",
+    match="whole_word",
+    case_sensitive=False,
+    scope="new_testament",
+    books=("John", "1 John"),
+    exclude=("darkness",),
+    sort="canonical",
+    limit=20,
+    offset=0,
+)
+
+response = bible.search("word life", "kjv", criteria)
+print(json.dumps(response, ensure_ascii=False, indent=2))
+```
+
+Search responses contain three top-level objects:
+
+- `query`: normalized criteria, translation metadata, exact total, pagination, SHA, and cache state.
+- `results`: the same grouped scripture object format returned by `select()`.
+- `matches`: ordered per-verse match metadata, including score, occurrences, and matched terms.
+
+This keeps existing scripture templates reusable. With relevance sorting, `matches` is the authoritative cross-chapter order.
+
+Search criteria may also be supplied as a JSON-decoded dictionary:
+
+```python
+response = bible.search(
+    "faith hope",
+    "kjv",
+    {
+        "words": "phrase",
+        "match": "whole_word",
+        "scope": "bible",
+        "diacritics": "sensitive",
+        "limit": 50,
+        "offset": 0,
+    },
+)
+```
+
+## Cache behavior
+
+Reference retrieval keeps the lightweight chapter request path. Search downloads the selected full translation once, verifies it against `/v2/{translation}.sha`, and builds a compact in-memory postings index.
+
+By default, full translations are cached under the operating system's user cache directory and checked every seven days. Configure a shared service cache explicitly:
+
+```python
+from datetime import timedelta
+
 from getbible import GetBible
 
-# Initialize the class
-getbible = GetBible()
 
-scripture = getbible.select("Genesis 1:1-5", 'aov')
-print(json.dumps(scripture, indent=4))  # Pretty-prints the dictionary.
+bible = GetBible(
+    cache_dir="/var/cache/getbible",
+    cache_ttl=timedelta(days=7),
+    strict_freshness=False,
+)
 ```
 
-In this code snippet, `"aov"` is used as the abbreviation for the Afrikaans Ou Vertaaling.
+Cache replacements are checksum-verified, process-locked, and atomic. A last-known-good translation remains available during temporary repository failures unless `strict_freshness=True`.
 
-### Get Reference
+## Documentation
 
-```python
-from getbible import GetBibleReference
+- [Usage and reference retrieval](docs/USAGE.md)
+- [Search criteria and response contract](docs/SEARCH.md)
+- [Cache validation and retention](docs/CACHING.md)
+- [Architecture](docs/ARCHITECTURE.md)
+- [Multi-worker operations](docs/OPERATIONS.md)
+- [Development and releases](docs/RELEASING.md)
+- [AI and repository guidance](AGENTS.md)
 
-# Initialize the class
-get = GetBibleReference()
+## Source installation
 
-# Find well form reference
-reference = get.ref("Genesis 1:1-5")
-print(reference)  # Outputs the dataclass [BookReference] { book: int, chapter: int, verses: list }
-```
-
-#### Using Translation Abbreviations
-
-When utilizing the `GetBibleReference` class to look up a reference, you can use the lowercase abbreviations of the target translation:
-
-```python
-from getbible import GetBibleReference
-
-# Initialize the class
-get = GetBibleReference()
-
-reference = get.ref("Genesis 1:1-5", 'kjv')
-```
-
-In this code snippet, `"kjv"` is used as the abbreviation for the King James Version to speedup the search.
-
-### Get Book Number
-
-```python
-from getbible import GetBibleBookNumber
-
-# Initialize the class
-get_book = GetBibleBookNumber()
-
-# Find a book number
-book_number = get_book.number("Genesis")
-print(book_number)  # Outputs the book number of "Genesis" = 1
-```
-
-#### Available Translations and Abbreviations
-
-The `GetBibleBookNumber` package supports a range of Bible translations, each identified by a lowercase abbreviation. These abbreviations and the corresponding translation data are stored in the `data` folder.
-
-#### Finding Translation Abbreviations
-
-To find the available translation abbreviations:
-
-1. Go to the `data` [directory in the package](https://git.vdm.dev/getBible/librarian/src/branch/master/src/getbible/data).
-2. Each JSON file in this directory corresponds to a different translation.
-3. The file name (without the `.json` extension) represents the abbreviation for that translation.
-
-For instance, if you find a file named `kjv.json`, then `kjv` is the abbreviation for the King James Version translation.
-
-#### Using Translation Abbreviations
-
-When utilizing the `GetBibleBookNumber` class to look up a book number, you should use these lowercase abbreviations:
-
-```python
-book_number = get_book.number("Gen", "kjv", ["aov", "swahili"])
-```
-
-In this code snippet, `"kjv"` is used as the abbreviation for the King James Version, `"aov"` for the Afrikaans Ou Vertaaling, and `"swahili"` for the Swahili Version.
-
-## Source Installation (git)
-
-To install `getBible` Librarian, you need to clone the repository and install the package manually. Ensure you have Python 3.7 or higher installed.
+The primary project home remains on VDM Gitea:
 
 ```bash
 git clone https://git.vdm.dev/getBible/librarian.git
 cd librarian
-pip install .
+python -m venv .venv
+.venv/bin/python -m pip install -e .
 ```
 
-## Development and Testing
-
-To contribute or run tests, clone the repository and set up a virtual environment:
+The GitHub deployment mirror can also be cloned:
 
 ```bash
-git clone https://git.vdm.dev/getBible/librarian.git
+git clone https://github.com/getbible/librarian.git
 cd librarian
-python -m venv venv
-source venv/bin/activate  # On Windows use `venv\Scripts\activate`
-pip install -e .
+python -m venv .venv
+.venv/bin/python -m pip install -e .
 ```
 
-Run tests using the standard unittest framework:
+## Development
 
 ```bash
-python -m unittest
+python -m venv .venv
+.venv/bin/python -m pip install -r requirements-dev.txt
+.venv/bin/python -m unittest discover -s tests -v
+.venv/bin/ruff check src tests benchmarks scripts examples
+.venv/bin/python -m build
+.venv/bin/python -m twine check dist/*
 ```
 
-## Contributing
+Live API tests are intentionally opt-in:
 
-Contributions to the `getbible` Librarian package are welcome. Please ensure to follow the coding standards and write tests for new features.
+```bash
+GETBIBLE_RUN_LIVE_TESTS=1 .venv/bin/python -m unittest \
+  tests.test_getbible tests.test_live_search -v
+```
 
 ## License
 
-This project is licensed under the GNU GPL v2.0. See the LICENSE file for more details.
-
+GetBible Librarian is licensed under the GNU General Public License v2.0 or later. See [LICENSE](LICENSE).
