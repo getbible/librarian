@@ -1,8 +1,13 @@
 import unittest
 import json
+import os
 from getbible import GetBible
 
 
+@unittest.skipUnless(
+    os.environ.get("GETBIBLE_RUN_LIVE_TESTS") == "1",
+    "Set GETBIBLE_RUN_LIVE_TESTS=1 to run live API integration tests.",
+)
 class TestGetBible(unittest.TestCase):
 
     def setUp(self):

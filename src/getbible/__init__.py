@@ -2,6 +2,7 @@ from .getbible_book_number import GetBibleBookNumber
 from .getbible_reference import GetBibleReference
 from .getbible_reference import BookReference
 from .getbible import GetBible
+from .search import SearchCriteria
 from .exceptions import (
     CacheIntegrityError,
     GetBibleError,
@@ -22,4 +23,5 @@ __all__ = [
     "RepositoryResourceNotFound",
     "RepositoryResponseError",
     "SearchValidationError",
+    "SearchCriteria",
 ]

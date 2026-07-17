@@ -17,7 +17,9 @@ setup(
     package_data={"getbible": ["data/*.json"]},
     include_package_data=True,
     install_requires=[
-        "requests~=2.31.0"
+        "filelock>=3.13,<4",
+        "regex>=2024.11,<2027",
+        "requests>=2.31,<3",
     ],
     classifiers=[
         "Programming Language :: Python :: 3",

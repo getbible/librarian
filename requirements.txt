@@ -1,1 +1,3 @@
-requests~=2.31.0
+filelock>=3.13,<4
+regex>=2024.11,<2027
+requests>=2.31,<3

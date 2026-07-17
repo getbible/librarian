@@ -1,0 +1,32 @@
+{
+  "1": {
+    "translation": "Librarian Test Translation",
+    "abbreviation": "test",
+    "lang": "en",
+    "language": "English",
+    "direction": "LTR",
+    "encoding": "UTF-8",
+    "nr": 1,
+    "name": "Genesis"
+  },
+  "40": {
+    "translation": "Librarian Test Translation",
+    "abbreviation": "test",
+    "lang": "en",
+    "language": "English",
+    "direction": "LTR",
+    "encoding": "UTF-8",
+    "nr": 40,
+    "name": "Matthew"
+  },
+  "67": {
+    "translation": "Librarian Test Translation",
+    "abbreviation": "test",
+    "lang": "en",
+    "language": "English",
+    "direction": "LTR",
+    "encoding": "UTF-8",
+    "nr": 67,
+    "name": "1 Esdras"
+  }
+}

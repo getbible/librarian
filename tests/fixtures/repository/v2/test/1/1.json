@@ -1,0 +1,38 @@
+{
+  "translation": "Librarian Test Translation",
+  "abbreviation": "test",
+  "lang": "en",
+  "language": "English",
+  "direction": "LTR",
+  "encoding": "UTF-8",
+  "book_nr": 1,
+  "book_name": "Genesis",
+  "chapter": 1,
+  "name": "Genesis 1",
+  "verses": [
+    {
+      "chapter": 1,
+      "verse": 1,
+      "name": "Genesis 1:1",
+      "text": "In the beginning God created the heaven and the earth."
+    },
+    {
+      "chapter": 1,
+      "verse": 2,
+      "name": "Genesis 1:2",
+      "text": "The earth was without form and void, and darkness covered the deep."
+    },
+    {
+      "chapter": 1,
+      "verse": 3,
+      "name": "Genesis 1:3",
+      "text": "Faith, hope, and love remain; love is greatest."
+    },
+    {
+      "chapter": 1,
+      "verse": 4,
+      "name": "Genesis 1:4",
+      "text": "A Café welcomes every pilgrim."
+    }
+  ]
+}

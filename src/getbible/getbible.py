@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
 import threading
 import time
@@ -14,6 +15,8 @@ from typing import Any, Optional
 from .exceptions import CacheIntegrityError, RepositoryResourceNotFound
 from .getbible_reference import BookReference, GetBibleReference
 from .repository_client import RepositoryClient
+from .search import SearchCriteria, SearchEngine, SearchHit, TranslationCorpus
+from .translation_cache import TranslationCache
 
 
 @dataclass
@@ -47,6 +50,8 @@ class GetBible:
         cache_ttl: timedelta = timedelta(days=7),
         request_timeout: tuple[float, float] = (3.05, 60.0),
         request_retries: int = 3,
+        cache_dir: Optional[str | os.PathLike[str]] = None,
+        strict_freshness: bool = False,
     ) -> None:
         self.__get = GetBibleReference()
         self._repository = RepositoryClient(
@@ -60,6 +65,13 @@ class GetBible:
         self.__chapters_cache: dict[str, _CacheEntry] = {}
         self._cache_guard = threading.RLock()
         self._resource_locks: dict[str, threading.Lock] = {}
+        self._translation_cache = TranslationCache(
+            repository=self._repository,
+            refresh_seconds=self._cache_ttl_seconds,
+            cache_dir=cache_dir,
+            strict_freshness=strict_freshness,
+        )
+        self._search_corpora: dict[str, TranslationCorpus] = {}
 
     def select(self, reference: str, abbreviation: Optional[str] = 'kjv') -> dict[str, Any]:
         """Return Bible verses using the established grouped result contract."""
@@ -80,6 +92,43 @@ class GetBible:
     def scripture(self, reference: str, abbreviation: Optional[str] = 'kjv') -> str:
         """Return :meth:`select` output encoded as JSON."""
         return json.dumps(self.select(reference, abbreviation), ensure_ascii=False)
+
+    def search(
+        self,
+        query: str,
+        abbreviation: Optional[str] = "kjv",
+        criteria: Optional[SearchCriteria | dict[str, Any] | str] = None,
+    ) -> dict[str, Any]:
+        """Search a translation and return additive metadata plus grouped scripture.
+
+        ``results`` uses the same chapter-keyed object structure returned by
+        :meth:`select`. ``query`` and ``matches`` add search-specific metadata
+        without changing the established scripture objects.
+        """
+        code = self._validated_translation_code(abbreviation)
+        parsed_criteria = SearchCriteria.from_value(criteria)
+        try:
+            corpus = self._search_corpus(code)
+        except RepositoryResourceNotFound as error:
+            raise FileNotFoundError(f"Translation ({code}) not found.") from error
+        engine = SearchEngine(
+            corpus,
+            lambda book: self.__get.book_number(book, code),
+        )
+        hits, total = engine.search(query, parsed_criteria)
+        return self._search_response(query, code, parsed_criteria, corpus, hits, total)
+
+    def search_json(
+        self,
+        query: str,
+        abbreviation: Optional[str] = "kjv",
+        criteria: Optional[SearchCriteria | dict[str, Any] | str] = None,
+    ) -> str:
+        """Return :meth:`search` output encoded as JSON."""
+        return json.dumps(
+            self.search(query, abbreviation, criteria),
+            ensure_ascii=False,
+        )
 
     def valid_reference(self, reference: str, abbreviation: Optional[str] = 'kjv') -> bool:
         """Return whether ``reference`` is structurally resolvable."""
@@ -136,6 +185,95 @@ class GetBible:
 
     def _is_fresh(self, entry: _CacheEntry) -> bool:
         return time.monotonic() - entry.loaded_at < self._cache_ttl_seconds
+
+    def _search_corpus(self, abbreviation: str) -> TranslationCorpus:
+        snapshot = self._translation_cache.load(abbreviation)
+        with self._cache_guard:
+            corpus = self._search_corpora.get(abbreviation)
+        if (
+            corpus is not None
+            and corpus.sha == snapshot.sha
+            and corpus.stale == snapshot.stale
+            and corpus.checked_at == snapshot.checked_at
+        ):
+            return corpus
+
+        lock = self._resource_lock(f"translation:{abbreviation}")
+        with lock:
+            with self._cache_guard:
+                corpus = self._search_corpora.get(abbreviation)
+            if (
+                corpus is not None
+                and corpus.sha == snapshot.sha
+                and corpus.stale == snapshot.stale
+                and corpus.checked_at == snapshot.checked_at
+            ):
+                return corpus
+            corpus = TranslationCorpus(snapshot)
+            with self._cache_guard:
+                self._search_corpora[abbreviation] = corpus
+            return corpus
+
+    @staticmethod
+    def _search_response(
+        query: str,
+        abbreviation: str,
+        criteria: SearchCriteria,
+        corpus: TranslationCorpus,
+        hits: list[SearchHit],
+        total: int,
+    ) -> dict[str, Any]:
+        results: dict[str, Any] = {}
+        matches: list[dict[str, Any]] = []
+        for hit in hits:
+            record = hit.record
+            cache_key = f"{abbreviation}_{record.book_nr}_{record.chapter}"
+            if cache_key not in results:
+                results[cache_key] = dict(corpus.chapter_metadata)
+                results[cache_key].update(
+                    {
+                        "book_nr": record.book_nr,
+                        "book_name": record.book_name,
+                        "chapter": record.chapter,
+                        "name": record.chapter_name,
+                        "ref": [],
+                        "verses": [],
+                    }
+                )
+            results[cache_key]["ref"].append(record.reference)
+            results[cache_key]["verses"].append(record.verse)
+            matches.append(
+                {
+                    "reference": record.reference,
+                    "book_nr": record.book_nr,
+                    "chapter": record.chapter,
+                    "verse": record.verse["verse"],
+                    "score": hit.score,
+                    "occurrences": hit.occurrences,
+                    "terms": list(hit.terms),
+                }
+            )
+
+        returned = len(hits)
+        return {
+            "query": {
+                "text": query,
+                "criteria": criteria.to_dict(),
+                "translation": corpus.translation_metadata,
+                "sha": corpus.sha,
+                "total": total,
+                "offset": criteria.offset,
+                "limit": criteria.limit,
+                "returned": returned,
+                "has_more": criteria.offset + returned < total,
+                "cache": {
+                    "checked_at": corpus.checked_at,
+                    "stale": corpus.stale,
+                },
+            },
+            "results": results,
+            "matches": matches,
+        }
 
     def __set_verse(
         self,

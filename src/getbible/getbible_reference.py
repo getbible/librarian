@@ -54,6 +54,12 @@ class GetBibleReference:
         except ValueError:
             return False
 
+    def book_number(
+        self, reference: str, translation_code: Optional[str] = None
+    ) -> Optional[int]:
+        """Resolve a book name or number using the configured alias tries."""
+        return self.__get_book.number(reference, translation_code)
+
     def __sanitize(self, reference: str) -> Optional[str]:
         if not isinstance(reference, str):
             return None
