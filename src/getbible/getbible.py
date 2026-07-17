@@ -10,7 +10,7 @@ import threading
 import time
 from dataclasses import dataclass
 from datetime import timedelta
-from typing import Any, Optional
+from typing import Any
 
 from .exceptions import CacheIntegrityError, RepositoryResourceNotFound
 from .getbible_reference import BookReference, GetBibleReference
@@ -23,7 +23,7 @@ from .translation_cache import TranslationCache
 class _CacheEntry:
     data: dict[str, Any]
     loaded_at: float
-    sha: Optional[str] = None
+    sha: str | None = None
 
 
 class GetBible:
@@ -50,7 +50,7 @@ class GetBible:
         cache_ttl: timedelta = timedelta(days=7),
         request_timeout: tuple[float, float] = (3.05, 60.0),
         request_retries: int = 3,
-        cache_dir: Optional[str | os.PathLike[str]] = None,
+        cache_dir: str | os.PathLike[str] | None = None,
         strict_freshness: bool = False,
     ) -> None:
         self.__get = GetBibleReference()
@@ -73,7 +73,7 @@ class GetBible:
         )
         self._search_corpora: dict[str, TranslationCorpus] = {}
 
-    def select(self, reference: str, abbreviation: Optional[str] = 'kjv') -> dict[str, Any]:
+    def select(self, reference: str, abbreviation: str | None = 'kjv') -> dict[str, Any]:
         """Return Bible verses using the established grouped result contract."""
         abbreviation = self._validated_translation_code(abbreviation)
         self.__check_translation(abbreviation)
@@ -89,15 +89,15 @@ class GetBible:
             self.__set_verse(abbreviation, book_reference, result)
         return result
 
-    def scripture(self, reference: str, abbreviation: Optional[str] = 'kjv') -> str:
+    def scripture(self, reference: str, abbreviation: str | None = 'kjv') -> str:
         """Return :meth:`select` output encoded as JSON."""
         return json.dumps(self.select(reference, abbreviation), ensure_ascii=False)
 
     def search(
         self,
         query: str,
-        abbreviation: Optional[str] = "kjv",
-        criteria: Optional[SearchCriteria | dict[str, Any] | str] = None,
+        abbreviation: str | None = "kjv",
+        criteria: SearchCriteria | dict[str, Any] | str | None = None,
     ) -> dict[str, Any]:
         """Search a translation and return additive metadata plus grouped scripture.
 
@@ -121,8 +121,8 @@ class GetBible:
     def search_json(
         self,
         query: str,
-        abbreviation: Optional[str] = "kjv",
-        criteria: Optional[SearchCriteria | dict[str, Any] | str] = None,
+        abbreviation: str | None = "kjv",
+        criteria: SearchCriteria | dict[str, Any] | str | None = None,
     ) -> str:
         """Return :meth:`search` output encoded as JSON."""
         return json.dumps(
@@ -130,7 +130,7 @@ class GetBible:
             ensure_ascii=False,
         )
 
-    def valid_reference(self, reference: str, abbreviation: Optional[str] = 'kjv') -> bool:
+    def valid_reference(self, reference: str, abbreviation: str | None = 'kjv') -> bool:
         """Return whether ``reference`` is structurally resolvable."""
         return self.__get.valid(reference, abbreviation)
 
@@ -171,7 +171,7 @@ class GetBible:
             and target in self.TARGET_OPTIONS
         )
 
-    def _validated_translation_code(self, abbreviation: Optional[str]) -> str:
+    def _validated_translation_code(self, abbreviation: str | None) -> str:
         if not isinstance(abbreviation, str):
             raise TypeError("Translation abbreviation must be a string.")
         code = abbreviation.casefold()

@@ -5,7 +5,6 @@ from __future__ import annotations
 import unicodedata
 from collections import OrderedDict
 from dataclasses import dataclass
-from typing import Optional
 
 from .getbible_book_number import GetBibleBookNumber
 
@@ -25,10 +24,10 @@ class GetBibleReference:
 
     def __init__(self, cache_limit: int = 5000) -> None:
         self.__get_book = GetBibleBookNumber()
-        self.__cache: OrderedDict[tuple[str, str], Optional[BookReference]] = OrderedDict()
+        self.__cache: OrderedDict[tuple[str, str], BookReference | None] = OrderedDict()
         self.__cache_limit = cache_limit
 
-    def ref(self, reference: str, translation_code: Optional[str] = None) -> BookReference:
+    def ref(self, reference: str, translation_code: str | None = None) -> BookReference:
         """Return a parsed reference or raise :class:`ValueError`."""
         normalized = self.__sanitize(reference)
         if normalized is None:
@@ -46,7 +45,7 @@ class GetBibleReference:
             raise ValueError(f"Invalid reference '{reference}'.")
         return cached
 
-    def valid(self, reference: str, translation_code: Optional[str] = None) -> bool:
+    def valid(self, reference: str, translation_code: str | None = None) -> bool:
         """Return whether ``reference`` can be resolved."""
         try:
             self.ref(reference, translation_code)
@@ -55,12 +54,12 @@ class GetBibleReference:
             return False
 
     def book_number(
-        self, reference: str, translation_code: Optional[str] = None
-    ) -> Optional[int]:
+        self, reference: str, translation_code: str | None = None
+    ) -> int | None:
         """Resolve a book name or number using the configured alias tries."""
         return self.__get_book.number(reference, translation_code)
 
-    def __sanitize(self, reference: str) -> Optional[str]:
+    def __sanitize(self, reference: str) -> str | None:
         if not isinstance(reference, str):
             return None
         normalized = unicodedata.normalize("NFC", reference.strip())
@@ -80,8 +79,8 @@ class GetBibleReference:
         self,
         original_reference: str,
         normalized_reference: str,
-        translation_code: Optional[str] = None,
-    ) -> Optional[BookReference]:
+        translation_code: str | None = None,
+    ) -> BookReference | None:
         book_chapter, verses_portion = self.__split_reference(normalized_reference)
         book_name = self.__extract_book_name(book_chapter)
         book_number = self.__get_book.number(book_name, translation_code)
@@ -105,7 +104,7 @@ class GetBibleReference:
         return reference.split(':', 1) if ':' in reference else (reference, '1')
 
     @staticmethod
-    def __extract_chapter(book_chapter: str) -> Optional[int]:
+    def __extract_chapter(book_chapter: str) -> int | None:
         digits = []
         for character in reversed(book_chapter):
             if not character.isdigit():
@@ -126,7 +125,7 @@ class GetBibleReference:
         return book_chapter[:index].strip() if index < len(book_chapter) else book_chapter.strip()
 
     @staticmethod
-    def __get_verses_numbers(verses: str) -> Optional[list[int]]:
+    def __get_verses_numbers(verses: str) -> list[int] | None:
         if not verses:
             return [1]
 
@@ -163,7 +162,7 @@ class GetBibleReference:
     def __manage_local_cache(
         self,
         key: tuple[str, str],
-        value: Optional[BookReference],
+        value: BookReference | None,
     ) -> None:
         if self.__cache_limit < 1:
             return

@@ -14,7 +14,6 @@ from getbible import (
     SearchValidationError,
 )
 
-
 FIXTURE_REPOSITORY = Path(__file__).parent / "fixtures" / "repository"
 
 

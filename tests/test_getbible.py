@@ -1,6 +1,7 @@
-import unittest
 import json
 import os
+import unittest
+
 from getbible import GetBible
 
 

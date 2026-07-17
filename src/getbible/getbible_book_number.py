@@ -1,6 +1,6 @@
-from .getbible_reference_trie import GetBibleReferenceTrie
 import os
-from typing import Any, List, Optional
+
+from .getbible_reference_trie import GetBibleReferenceTrie
 
 
 class GetBibleBookNumber:
@@ -25,8 +25,10 @@ class GetBibleBookNumber:
         translation_code = filename.split('.')[0]
         try:
             trie.load(os.path.join(self.__data_path, filename))
-        except IOError as e:
-            raise IOError(f"Error loading translation {translation_code}: {e}")
+        except OSError as error:
+            raise OSError(
+                f"Error loading translation {translation_code}: {error}"
+            ) from error
         self.__tries[translation_code] = trie
 
     def __load_all_translations(self) -> None:
@@ -37,7 +39,7 @@ class GetBibleBookNumber:
             if filename.endswith('.json'):
                 self.__load_translation(filename)
 
-    def __valid_book_number(self, number: str) -> Optional[int]:
+    def __valid_book_number(self, number: str) -> int | None:
         """
         Check if the number is a valid book number.
         """
@@ -51,8 +53,8 @@ class GetBibleBookNumber:
             # Handle the case where the number cannot be converted to an integer
             return None
 
-    def number(self, reference: str, translation_code: Optional[str] = None,
-               fallback_translations: Optional[List[str]] = None) -> Optional[int]:
+    def number(self, reference: str, translation_code: str | None = None,
+               fallback_translations: list[str] | None = None) -> int | None:
         """
         Get the book number based on a reference and translation code.
 

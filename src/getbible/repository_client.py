@@ -101,9 +101,13 @@ class RepositoryClient:
         return os.path.join(self.repo_path, self.version, clean_relative)
 
     def _session(self) -> requests.Session:
+        process_id = os.getpid()
         session = getattr(self._thread_local, "session", None)
-        if session is not None:
+        session_process_id = getattr(self._thread_local, "process_id", None)
+        if session is not None and session_process_id == process_id:
             return session
+        if session is not None:
+            session.close()
 
         retry = Retry(
             total=self.retries,
@@ -121,4 +125,5 @@ class RepositoryClient:
         session.mount("http://", adapter)
         session.mount("https://", adapter)
         self._thread_local.session = session
+        self._thread_local.process_id = process_id
         return session

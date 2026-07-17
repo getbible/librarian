@@ -1,8 +1,3 @@
-from .getbible_book_number import GetBibleBookNumber
-from .getbible_reference import GetBibleReference
-from .getbible_reference import BookReference
-from .getbible import GetBible
-from .search import SearchCriteria
 from .exceptions import (
     CacheIntegrityError,
     GetBibleError,
@@ -11,6 +6,10 @@ from .exceptions import (
     RepositoryResponseError,
     SearchValidationError,
 )
+from .getbible import GetBible
+from .getbible_book_number import GetBibleBookNumber
+from .getbible_reference import BookReference, GetBibleReference
+from .search import SearchCriteria
 
 __all__ = [
     "BookReference",

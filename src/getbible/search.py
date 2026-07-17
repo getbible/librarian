@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
-import unicodedata
 import threading
+import unicodedata
 from array import array
 from collections import Counter
-from itertools import groupby
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
-from typing import Any, Callable, ClassVar, Mapping, Optional, Sequence
+from itertools import groupby
+from typing import Any, ClassVar
 
 import regex
 
@@ -36,7 +37,7 @@ class SearchCriteria:
     books: tuple[int | str, ...] = field(default_factory=tuple)
     diacritics: str = "sensitive"
     exclude: tuple[str, ...] = field(default_factory=tuple)
-    proximity: Optional[int] = None
+    proximity: int | None = None
     sort: str = "canonical"
     limit: int = 100
     offset: int = 0
@@ -59,8 +60,8 @@ class SearchCriteria:
     @classmethod
     def from_value(
         cls,
-        value: Optional["SearchCriteria" | Mapping[str, Any] | str],
-    ) -> "SearchCriteria":
+        value: SearchCriteria | Mapping[str, Any] | str | None,
+    ) -> SearchCriteria:
         if value is None:
             return cls()
         if isinstance(value, cls):
@@ -86,7 +87,7 @@ class SearchCriteria:
             raise SearchValidationError(str(error)) from error
 
     @classmethod
-    def from_legacy(cls, value: str) -> "SearchCriteria":
+    def from_legacy(cls, value: str) -> SearchCriteria:
         parts = value.split("-")
         if len(parts) != 4:
             raise SearchValidationError(f"Invalid legacy search criteria '{value}'.")
@@ -118,7 +119,7 @@ class SearchCriteria:
             )
         raise SearchValidationError(f"Invalid legacy search criteria '{value}'.")
 
-    def with_pagination(self, limit: int, offset: int) -> "SearchCriteria":
+    def with_pagination(self, limit: int, offset: int) -> SearchCriteria:
         return replace(self, limit=limit, offset=offset)
 
     def to_dict(self) -> dict[str, Any]:
@@ -260,11 +261,11 @@ class TranslationCorpus:
     def resolve_books(
         self,
         requested: Sequence[int | str],
-        fallback: Callable[[str], Optional[int]],
+        fallback: Callable[[str], int | None],
     ) -> frozenset[int]:
         resolved: set[int] = set()
         for book in requested:
-            number: Optional[int]
+            number: int | None
             if isinstance(book, int):
                 number = book
             elif book.strip().isdigit():
@@ -330,7 +331,7 @@ class SearchEngine:
     def __init__(
         self,
         corpus: TranslationCorpus,
-        book_number: Callable[[str], Optional[int]],
+        book_number: Callable[[str], int | None],
     ) -> None:
         self.corpus = corpus
         self.book_number = book_number
@@ -469,7 +470,7 @@ class _Matcher:
     def search(
         self,
         index: SearchIndex,
-        eligible: Optional[frozenset[int]],
+        eligible: frozenset[int] | None,
     ) -> dict[int, tuple[int, int, tuple[str, ...]]]:
         if self.criteria.words == "phrase":
             matches = self._phrase_matches(index, eligible)
@@ -491,7 +492,7 @@ class _Matcher:
     def _phrase_matches(
         self,
         index: SearchIndex,
-        eligible: Optional[frozenset[int]],
+        eligible: frozenset[int] | None,
     ) -> dict[int, tuple[int, int, tuple[str, ...]]]:
         if self.criteria.match == "substring":
             candidates = eligible if eligible is not None else range(len(index.texts))
@@ -519,7 +520,7 @@ class _Matcher:
     def _word_matches(
         self,
         index: SearchIndex,
-        eligible: Optional[frozenset[int]],
+        eligible: frozenset[int] | None,
     ) -> dict[int, tuple[int, int, tuple[str, ...]]]:
         per_term = [self._posting_counts(index, term) for term in self.terms]
         ordinal_sets = [set(counts) for counts in per_term]
@@ -536,7 +537,9 @@ class _Matcher:
         for ordinal in candidates:
             counts = tuple(values.get(ordinal, 0) for values in per_term)
             terms = tuple(
-                term for term, count in zip(self.terms, counts) if count > 0
+                term
+                for term, count in zip(self.terms, counts, strict=True)
+                if count > 0
             )
             occurrences = sum(counts)
             matches[ordinal] = (occurrences, occurrences, terms)

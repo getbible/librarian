@@ -1,6 +1,6 @@
 import unittest
-from getbible import GetBibleReference
-from getbible import BookReference
+
+from getbible import BookReference, GetBibleReference
 
 
 class TestGetBibleReference(unittest.TestCase):

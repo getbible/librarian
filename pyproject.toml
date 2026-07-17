@@ -1,3 +1,69 @@
 [build-system]
-requires = ["setuptools>=65.5.1", "wheel"]
+requires = ["setuptools>=77", "wheel"]
 build-backend = "setuptools.build_meta"
+
+[project]
+name = "getbible"
+version = "1.2.0"
+description = "Retrieve and search Bible scripture through the GetBible API."
+readme = "README.md"
+requires-python = ">=3.10"
+license = "GPL-2.0-or-later"
+license-files = ["LICENSE"]
+authors = [
+  {name = "Llewellyn van der Merwe", email = "getbible@vdm.io"},
+]
+dependencies = [
+  "filelock>=3.13,<4",
+  "regex>=2024.11,<2027",
+  "requests>=2.31,<3",
+]
+classifiers = [
+  "Development Status :: 4 - Beta",
+  "Intended Audience :: Developers",
+  "Operating System :: OS Independent",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Programming Language :: Python :: 3.14",
+  "Topic :: Religion",
+  "Topic :: Software Development :: Libraries :: Python Modules",
+]
+
+[project.optional-dependencies]
+dev = [
+  "build>=1.2",
+  "ruff>=0.8",
+  "twine>=5",
+]
+
+[project.urls]
+Homepage = "https://git.vdm.dev/getBible/librarian"
+Repository = "https://github.com/getbible/librarian"
+Documentation = "https://github.com/getbible/librarian/tree/master/docs"
+Issues = "https://github.com/getbible/librarian/issues"
+"GetBible API" = "https://api.getbible.net/v2/translations.json"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+include-package-data = true
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+getbible = ["data/*.json"]
+
+[tool.ruff]
+target-version = "py310"
+line-length = 100
+extend-exclude = ["src/getbible/data"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["B011"]
+"tests/test_getbible*.py" = ["E501"]

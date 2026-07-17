@@ -1,8 +1,8 @@
-from .trie_node import TrieNode
 import json
 import re
 import unicodedata
-from typing import Dict, Optional
+
+from .trie_node import TrieNode
 
 
 class GetBibleReferenceTrie:
@@ -41,7 +41,7 @@ class GetBibleReferenceTrie:
                 node = node.children.setdefault(char, TrieNode())
             node.book_number = book_number
 
-    def search(self, book_name: str) -> Optional[str]:
+    def search(self, book_name: str) -> str | None:
         """
         Search for a book number based on a book name.
 
@@ -56,7 +56,7 @@ class GetBibleReferenceTrie:
                 return None
         return node.book_number if node.book_number else None
 
-    def __dump_to_dict(self, node: Optional[TrieNode] = None, key: str = '') -> Dict[str, Dict]:
+    def __dump_to_dict(self, node: TrieNode | None = None, key: str = '') -> dict[str, dict]:
         """
         Convert the Trie into a dictionary representation.
 
@@ -96,13 +96,13 @@ class GetBibleReferenceTrie:
         :raises Exception: If any other error occurs.
         """
         try:
-            with open(file_path, 'r') as file:
+            with open(file_path) as file:
                 data = json.load(file)
                 for book_number, names in data.items():
                     self.__insert(book_number, names)
-        except IOError as e:
-            raise IOError(f"Error loading file {file_path}: {e}")
-        except json.JSONDecodeError as e:
-            raise ValueError(f"Error decoding JSON from file {file_path}: {e}")
-        except Exception as e:
-            raise Exception(f"An error occurred while processing {file_path}: {e}")
+        except OSError as error:
+            raise OSError(f"Error loading file {file_path}: {error}") from error
+        except json.JSONDecodeError as error:
+            raise ValueError(
+                f"Error decoding JSON from file {file_path}: {error}"
+            ) from error

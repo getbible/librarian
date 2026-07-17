@@ -9,9 +9,10 @@ import os
 import tempfile
 import threading
 import time
+from contextlib import suppress
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 from filelock import FileLock
 
@@ -43,7 +44,7 @@ class TranslationCache:
         self,
         repository: RepositoryClient,
         refresh_seconds: float,
-        cache_dir: Optional[str | os.PathLike[str]] = None,
+        cache_dir: str | os.PathLike[str] | None = None,
         strict_freshness: bool = False,
         lock_timeout: float = 120.0,
     ) -> None:
@@ -106,7 +107,7 @@ class TranslationCache:
                     )
                 return self._remember(abbreviation, refreshed)
 
-    def invalidate(self, abbreviation: Optional[str] = None) -> None:
+    def invalidate(self, abbreviation: str | None = None) -> None:
         """Evict one or every in-memory translation snapshot."""
         with self._guard:
             if abbreviation is None:
@@ -118,7 +119,7 @@ class TranslationCache:
         self,
         abbreviation: str,
         paths: dict[str, Path],
-        disk: Optional[TranslationSnapshot],
+        disk: TranslationSnapshot | None,
         now: float,
     ) -> TranslationSnapshot:
         try:
@@ -149,7 +150,7 @@ class TranslationCache:
         self._write_metadata(paths["metadata"], snapshot)
         return snapshot
 
-    def _read_disk(self, paths: dict[str, Path]) -> Optional[TranslationSnapshot]:
+    def _read_disk(self, paths: dict[str, Path]) -> TranslationSnapshot | None:
         try:
             raw = paths["translation"].read_bytes()
             metadata = json.loads(paths["metadata"].read_text(encoding="utf-8"))
@@ -190,7 +191,7 @@ class TranslationCache:
 
     def _paths(self, abbreviation: str) -> dict[str, Path]:
         namespace = hashlib.sha256(
-            f"{self.repository.repo_path}|{self.repository.version}".encode("utf-8")
+            f"{self.repository.repo_path}|{self.repository.version}".encode()
         ).hexdigest()[:16]
         directory = self.cache_dir / namespace / self.repository.version
         return {
@@ -201,7 +202,7 @@ class TranslationCache:
         }
 
     @staticmethod
-    def _cache_root(cache_dir: Optional[str | os.PathLike[str]]) -> Path:
+    def _cache_root(cache_dir: str | os.PathLike[str] | None) -> Path:
         if cache_dir is not None:
             return Path(cache_dir).expanduser()
         configured = os.environ.get("GETBIBLE_CACHE_DIR")
@@ -235,10 +236,8 @@ class TranslationCache:
                 os.fsync(handle.fileno())
             os.replace(temporary_name, path)
         finally:
-            try:
+            with suppress(FileNotFoundError):
                 os.unlink(temporary_name)
-            except FileNotFoundError:
-                pass
 
     def _translation_lock(self, abbreviation: str) -> threading.Lock:
         with self._guard:
