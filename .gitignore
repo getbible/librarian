@@ -1,4 +1,9 @@
 .idea/
+
+# Retired GitHub Actions workflows
+.github/workflows/deploy-package.yml
+.github/workflows/stable-librarian.yml
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
@@ -94,4 +99,3 @@ venv/
 ENV/
 env.bak/
 venv.bak/
-
