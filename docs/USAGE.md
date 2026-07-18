@@ -97,15 +97,25 @@ The book resolver uses bundled Unicode-normalized alias tries. It tries the requ
 
 ## Local API-compatible repository
 
-The same client can read API v2-compatible files from disk:
+The same client can read API v2-compatible files from disk. A string path or a `pathlib.Path` can be used:
 
 ```python
+from pathlib import Path
+
 from getbible import GetBible
 
 
-bible = GetBible(repo_path="/srv/getbible-data", version="v2")
+bible = GetBible(repo_path=Path("/srv/getbible-data"), version="v2")
 selection = bible.select("Genesis 1:1", "kjv")
 ```
+
+Switching back to the remote API changes only `repo_path`:
+
+```python
+bible = GetBible(repo_path="https://api.getbible.net", version="v2")
+```
+
+Local paths and HTTP(S) URLs use the same API-compatible layout and return the same scripture and search JSON contracts. Deterministic tests serve the local fixture repository over HTTP and compare both modes directly.
 
 Expected paths include:
 

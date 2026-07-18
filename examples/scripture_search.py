@@ -2,12 +2,12 @@
 
 import json
 
-from getbible import GetBible, SearchCriteria
+from getbible import GetBible, SearchBible
 
 
 def main() -> int:
     bible = GetBible()
-    criteria = SearchCriteria(
+    criteria = SearchBible(
         words="all",
         match="whole_word",
         case_sensitive=False,

@@ -10,6 +10,7 @@ from pathlib import Path
 from getbible import (
     CacheIntegrityError,
     GetBible,
+    SearchBible,
     SearchCriteria,
     SearchValidationError,
 )
@@ -17,9 +18,12 @@ from getbible import (
 FIXTURE_REPOSITORY = Path(__file__).parent / "fixtures" / "repository"
 
 
-class TestSearchCriteria(unittest.TestCase):
+class TestSearchBible(unittest.TestCase):
+    def test_previous_class_name_remains_a_compatibility_alias(self):
+        self.assertIs(SearchCriteria, SearchBible)
+
     def test_mapping_is_json_friendly(self):
-        criteria = SearchCriteria.from_value(
+        criteria = SearchBible.from_value(
             {
                 "words": "phrase",
                 "match": "substring",
@@ -33,7 +37,7 @@ class TestSearchCriteria(unittest.TestCase):
         self.assertEqual(criteria.to_dict()["books"], ["Genesis", 40])
 
     def test_legacy_criteria_are_supported(self):
-        criteria = SearchCriteria.from_legacy(
+        criteria = SearchBible.from_legacy(
             "allwords-exactmatch-caseinsensitive-newtestament"
         )
         self.assertEqual(criteria.words, "all")
@@ -43,22 +47,22 @@ class TestSearchCriteria(unittest.TestCase):
 
     def test_unknown_criterion_is_rejected(self):
         with self.assertRaises(SearchValidationError):
-            SearchCriteria.from_value({"unknown": True})
+            SearchBible.from_value({"unknown": True})
 
     def test_single_book_and_exclusion_strings_are_normalized(self):
-        criteria = SearchCriteria(books="Genesis", exclude="darkness")
+        criteria = SearchBible(books="Genesis", exclude="darkness")
         self.assertEqual(criteria.books, ("Genesis",))
         self.assertEqual(criteria.exclude, ("darkness",))
 
     def test_non_string_modes_are_rejected_cleanly(self):
         with self.assertRaises(SearchValidationError):
-            SearchCriteria.from_value({"words": 1})
+            SearchBible.from_value({"words": 1})
 
     def test_invalid_pagination_is_rejected(self):
         with self.assertRaises(SearchValidationError):
-            SearchCriteria(limit=0)
+            SearchBible(limit=0)
         with self.assertRaises(SearchValidationError):
-            SearchCriteria(offset=-1)
+            SearchBible(offset=-1)
 
 
 class TestGetBibleSearch(unittest.TestCase):
@@ -76,7 +80,7 @@ class TestGetBibleSearch(unittest.TestCase):
         response = self.bible.search(
             "in the beginning",
             "test",
-            SearchCriteria(words="phrase"),
+            SearchBible(words="phrase"),
         )
         self.assertEqual(response["query"]["total"], 1)
         self.assertEqual(response["query"]["returned"], 1)
@@ -95,7 +99,7 @@ class TestGetBibleSearch(unittest.TestCase):
     def test_all_and_any_word_modes(self):
         all_response = self.bible.search("faith hope", "test")
         any_response = self.bible.search(
-            "faith wisdom", "test", SearchCriteria(words="any")
+            "faith wisdom", "test", SearchBible(words="any")
         )
         self.assertEqual(all_response["query"]["total"], 3)
         self.assertEqual(any_response["query"]["total"], 4)
@@ -103,14 +107,14 @@ class TestGetBibleSearch(unittest.TestCase):
     def test_whole_word_and_substring_modes(self):
         whole = self.bible.search("great", "test")
         partial = self.bible.search(
-            "great", "test", SearchCriteria(match="substring")
+            "great", "test", SearchBible(match="substring")
         )
         self.assertEqual(whole["query"]["total"], 0)
         self.assertEqual(partial["query"]["total"], 1)
 
     def test_case_sensitive_mode(self):
         sensitive = self.bible.search(
-            "Word", "test", SearchCriteria(case_sensitive=True)
+            "Word", "test", SearchBible(case_sensitive=True)
         )
         insensitive = self.bible.search("word", "test")
         self.assertEqual(sensitive["matches"][0]["occurrences"], 1)
@@ -118,13 +122,13 @@ class TestGetBibleSearch(unittest.TestCase):
 
     def test_testament_and_deuterocanonical_scopes(self):
         old = self.bible.search(
-            "faith hope", "test", SearchCriteria(scope="old_testament")
+            "faith hope", "test", SearchBible(scope="old_testament")
         )
         new = self.bible.search(
-            "faith hope", "test", SearchCriteria(scope="new_testament")
+            "faith hope", "test", SearchBible(scope="new_testament")
         )
         deuterocanon = self.bible.search(
-            "wisdom", "test", SearchCriteria(scope="deuterocanon")
+            "wisdom", "test", SearchBible(scope="deuterocanon")
         )
         self.assertEqual(old["query"]["total"], 1)
         self.assertEqual(new["query"]["total"], 2)
@@ -132,10 +136,10 @@ class TestGetBibleSearch(unittest.TestCase):
 
     def test_specific_books_accept_names_and_numbers(self):
         by_name = self.bible.search(
-            "faith hope", "test", SearchCriteria(books=("Genesis",))
+            "faith hope", "test", SearchBible(books=("Genesis",))
         )
         by_number = self.bible.search(
-            "faith hope", "test", SearchCriteria(books=(40,))
+            "faith hope", "test", SearchBible(books=(40,))
         )
         self.assertEqual(by_name["query"]["total"], 1)
         self.assertEqual(by_number["query"]["total"], 2)
@@ -143,17 +147,17 @@ class TestGetBibleSearch(unittest.TestCase):
     def test_diacritic_insensitive_search(self):
         sensitive = self.bible.search("Cafe", "test")
         insensitive = self.bible.search(
-            "Cafe", "test", SearchCriteria(diacritics="insensitive")
+            "Cafe", "test", SearchBible(diacritics="insensitive")
         )
         self.assertEqual(sensitive["query"]["total"], 0)
         self.assertEqual(insensitive["query"]["total"], 1)
 
     def test_exclusion_and_proximity(self):
         excluded = self.bible.search(
-            "faith hope", "test", SearchCriteria(exclude=("love",))
+            "faith hope", "test", SearchBible(exclude=("love",))
         )
         adjacent = self.bible.search(
-            "faith hope", "test", SearchCriteria(proximity=0)
+            "faith hope", "test", SearchBible(proximity=0)
         )
         self.assertEqual(excluded["query"]["total"], 2)
         self.assertEqual(adjacent["query"]["total"], 1)
@@ -163,7 +167,7 @@ class TestGetBibleSearch(unittest.TestCase):
         response = self.bible.search(
             "faith hope",
             "test",
-            SearchCriteria(sort="relevance", limit=1, offset=1),
+            SearchBible(sort="relevance", limit=1, offset=1),
         )
         self.assertEqual(response["query"]["total"], 3)
         self.assertEqual(response["query"]["returned"], 1)
@@ -171,7 +175,7 @@ class TestGetBibleSearch(unittest.TestCase):
         self.assertEqual(len(response["matches"]), 1)
 
     def test_search_json_matches_dictionary_output(self):
-        criteria = SearchCriteria(scope="new_testament", limit=2)
+        criteria = SearchBible(scope="new_testament", limit=2)
         dictionary = self.bible.search("faith", "test", criteria)
         encoded = self.bible.search_json("faith", "test", criteria)
         self.assertEqual(json.loads(encoded), dictionary)

@@ -9,7 +9,7 @@ from .exceptions import (
 from .getbible import GetBible
 from .getbible_book_number import GetBibleBookNumber
 from .getbible_reference import BookReference, GetBibleReference
-from .search import SearchCriteria
+from .search import SearchBible, SearchCriteria
 
 __all__ = [
     "BookReference",
@@ -22,5 +22,6 @@ __all__ = [
     "RepositoryResourceNotFound",
     "RepositoryResponseError",
     "SearchValidationError",
+    "SearchBible",
     "SearchCriteria",
 ]

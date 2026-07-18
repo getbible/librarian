@@ -36,11 +36,11 @@ Librarian detects process changes and does not reuse an HTTP session created by 
 To share as much read-only memory as the operating system permits, a deployment may warm its most-used translation and default index before forking:
 
 ```python
-from getbible import GetBible, SearchCriteria
+from getbible import GetBible, SearchBible
 
 
 bible = GetBible(cache_dir="/var/cache/getbible")
-bible.search("the", "kjv", SearchCriteria(limit=1))
+bible.search("the", "kjv", SearchBible(limit=1))
 ```
 
 Whether preloading is beneficial depends on the server, worker lifecycle, and available memory. Benchmark both preloaded and per-worker warm-up configurations.

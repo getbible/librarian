@@ -15,7 +15,7 @@ from typing import Any
 from .exceptions import CacheIntegrityError, RepositoryResourceNotFound
 from .getbible_reference import BookReference, GetBibleReference
 from .repository_client import RepositoryClient
-from .search import SearchCriteria, SearchEngine, SearchHit, TranslationCorpus
+from .search import SearchBible, SearchEngine, SearchHit, TranslationCorpus
 from .translation_cache import TranslationCache
 
 
@@ -45,7 +45,7 @@ class GetBible:
 
     def __init__(
         self,
-        repo_path: str = "https://api.getbible.net",
+        repo_path: str | os.PathLike[str] = "https://api.getbible.net",
         version: str = 'v2',
         cache_ttl: timedelta = timedelta(days=7),
         request_timeout: tuple[float, float] = (3.05, 60.0),
@@ -97,7 +97,7 @@ class GetBible:
         self,
         query: str,
         abbreviation: str | None = "kjv",
-        criteria: SearchCriteria | dict[str, Any] | str | None = None,
+        criteria: SearchBible | dict[str, Any] | str | None = None,
     ) -> dict[str, Any]:
         """Search a translation and return additive metadata plus grouped scripture.
 
@@ -106,7 +106,7 @@ class GetBible:
         without changing the established scripture objects.
         """
         code = self._validated_translation_code(abbreviation)
-        parsed_criteria = SearchCriteria.from_value(criteria)
+        parsed_criteria = SearchBible.from_value(criteria)
         try:
             corpus = self._search_corpus(code)
         except RepositoryResourceNotFound as error:
@@ -122,7 +122,7 @@ class GetBible:
         self,
         query: str,
         abbreviation: str | None = "kjv",
-        criteria: SearchCriteria | dict[str, Any] | str | None = None,
+        criteria: SearchBible | dict[str, Any] | str | None = None,
     ) -> str:
         """Return :meth:`search` output encoded as JSON."""
         return json.dumps(
@@ -218,7 +218,7 @@ class GetBible:
     def _search_response(
         query: str,
         abbreviation: str,
-        criteria: SearchCriteria,
+        criteria: SearchBible,
         corpus: TranslationCorpus,
         hits: list[SearchHit],
         total: int,

@@ -28,13 +28,17 @@ class RepositoryClient:
 
     def __init__(
         self,
-        repo_path: str = "https://api.getbible.net",
+        repo_path: str | os.PathLike[str] = "https://api.getbible.net",
         version: str = "v2",
         timeout: tuple[float, float] = (3.05, 60.0),
         retries: int = 3,
         backoff_factor: float = 0.25,
     ) -> None:
-        self.repo_path = repo_path.rstrip("/")
+        source = os.fspath(repo_path)
+        if source.startswith(("http://", "https://")):
+            self.repo_path = source.rstrip("/")
+        else:
+            self.repo_path = os.path.normpath(os.path.expanduser(source))
         self.version = version.strip("/")
         self.timeout = timeout
         self.retries = retries

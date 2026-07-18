@@ -49,20 +49,20 @@ The artifact can be downloaded and installed in a clean environment before relea
 3. Review `CHANGELOG.md` and replace `Unreleased` with the release date.
 4. Confirm the version in `pyproject.toml`.
 5. Merge the exact release state into `master`.
-6. Tag that master commit as `v<version>`.
+6. Open the GitHub Actions **Release** workflow, choose **Run workflow**, and enter the version without the leading `v`.
 
-The tag must exactly match the project version. `scripts/check_release_version.py` enforces this before publication.
+The workflow always checks out `master`, requires the entered version to match `pyproject.toml`, and creates the corresponding `v<version>` tag only after tests and package validation pass. It refuses to move an existing tag. Directly pushing a correctly formatted tag remains supported for maintainers who need that route.
 
 ## Automated release
 
-The release workflow:
+The manually triggered release workflow:
 
-1. Installs the project development tools.
-2. Verifies the tag and package version.
-3. Runs deterministic tests.
-4. Builds source and wheel distributions.
-5. Runs `twine check`.
+1. Checks out the exact `master` release commit.
+2. Verifies the entered version against the package version.
+3. Installs the project development tools and runs deterministic tests.
+4. Builds source and wheel distributions and runs `twine check`.
+5. Creates and pushes the immutable `v<version>` tag.
 6. Publishes with the `PYPI_API_TOKEN` environment secret.
 7. Creates a GitHub release with generated commit notes and both distributions.
 
-Configure the `pypi` GitHub environment and its `PYPI_API_TOKEN` secret before tagging.
+Configure the `pypi` GitHub environment and its `PYPI_API_TOKEN` secret before running a release.

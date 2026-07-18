@@ -20,7 +20,9 @@ encoded = bible.search_json("faith hope", "kjv")
 
 ## JSON-friendly criteria
 
-`SearchCriteria` and plain dictionaries use the same field names.
+`SearchBible` and plain dictionaries use the same field names.
+
+`SearchBible` is the canonical public class name. `SearchCriteria` remains available as a compatibility alias for integrations that adopted the earlier development name.
 
 | Field | Values | Default |
 |---|---|---|
@@ -37,11 +39,11 @@ encoded = bible.search_json("faith hope", "kjv")
 | `offset` | Non-negative integer | `0` |
 
 ```python
-from getbible import GetBible, SearchCriteria
+from getbible import GetBible, SearchBible
 
 
 bible = GetBible()
-criteria = SearchCriteria(
+criteria = SearchBible(
     words="all",
     match="whole_word",
     case_sensitive=False,
@@ -66,7 +68,7 @@ response = bible.search("word life", "kjv", criteria)
 Every distinct query term must occur in the verse:
 
 ```python
-criteria = SearchCriteria(words="all")
+criteria = SearchBible(words="all")
 response = bible.search("faith hope", "kjv", criteria)
 ```
 
@@ -75,7 +77,7 @@ response = bible.search("faith hope", "kjv", criteria)
 At least one query term must occur:
 
 ```python
-criteria = SearchCriteria(words="any")
+criteria = SearchBible(words="any")
 response = bible.search("faith hope", "kjv", criteria)
 ```
 
@@ -84,7 +86,7 @@ response = bible.search("faith hope", "kjv", criteria)
 Terms must occur in order and adjacent, with punctuation and whitespace allowed between whole words:
 
 ```python
-criteria = SearchCriteria(words="phrase")
+criteria = SearchBible(words="phrase")
 response = bible.search("in the beginning", "kjv", criteria)
 ```
 
@@ -171,7 +173,7 @@ response = bible.search(
 )
 ```
 
-New integrations should use `SearchCriteria` or a dictionary because they support pagination, multiple books, exclusion, proximity, and future additive fields.
+New integrations should use `SearchBible` or a dictionary because they support pagination, multiple books, exclusion, proximity, and future additive fields.
 
 ## Synonyms
 

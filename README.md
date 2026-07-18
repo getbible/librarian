@@ -44,11 +44,11 @@ print(encoded)
 ```python
 import json
 
-from getbible import GetBible, SearchCriteria
+from getbible import GetBible, SearchBible
 
 
 bible = GetBible()
-criteria = SearchCriteria(
+criteria = SearchBible(
     words="all",
     match="whole_word",
     case_sensitive=False,

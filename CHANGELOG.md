@@ -7,6 +7,7 @@ All notable project changes are documented here.
 ### Added
 
 - JSON-friendly scripture search with all-word, any-word, phrase, whole-word, substring, case, diacritic, testament, deuterocanonical, book, exclusion, proximity, relevance, and pagination criteria.
+- `SearchBible`, the canonical public class for validated search behavior, with a compatibility alias for the earlier development name.
 - Search response metadata with exact totals, source SHA, cache state, ordered match metadata, and the established grouped scripture result objects.
 - Persistent checksum-validated full-translation caching with atomic cross-worker replacement and last-known-good fallback.
 - Deterministic offline search, concurrency, integrity, and cache tests.
@@ -20,6 +21,8 @@ All notable project changes are documented here.
 - Made reference caching translation-aware and genuinely least-recently-used.
 - Improved Unicode normalization for book names and references.
 - Aligned supported Python versions, dependency metadata, CI, package builds, and tag-driven releases.
+- Added an Actions-driven release path that validates an entered version and creates its matching Git tag automatically.
+- Local filesystem repositories now accept `pathlib.Path` values directly and are parity-tested against HTTP repositories.
 
 ### Fixed
 

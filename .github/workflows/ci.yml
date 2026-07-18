@@ -74,6 +74,13 @@ jobs:
       - name: Verify distributions
         run: python -m twine check dist/*
 
+      - name: Test built wheel in isolation
+        run: |
+          python -m venv "${RUNNER_TEMP}/getbible-wheel"
+          "${RUNNER_TEMP}/getbible-wheel/bin/python" -m pip install dist/*.whl
+          cd "${RUNNER_TEMP}"
+          "${RUNNER_TEMP}/getbible-wheel/bin/python" -c "from getbible import GetBible, SearchBible; assert SearchBible().limit == 100; GetBible()"
+
       - name: Upload distributions
         uses: actions/upload-artifact@v4
         with:

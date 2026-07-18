@@ -8,7 +8,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
-from getbible import GetBible, SearchCriteria
+from getbible import GetBible, SearchBible
 
 
 def parse_arguments() -> argparse.Namespace:
@@ -39,7 +39,7 @@ def benchmark(arguments: argparse.Namespace) -> dict[str, Any]:
         version=arguments.version,
         cache_dir=arguments.cache_dir,
     )
-    criteria = SearchCriteria(
+    criteria = SearchBible(
         words=arguments.words,
         match=arguments.match,
         limit=arguments.limit,

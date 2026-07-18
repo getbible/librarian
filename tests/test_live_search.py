@@ -1,7 +1,7 @@
 import os
 import unittest
 
-from getbible import GetBible, SearchCriteria
+from getbible import GetBible, SearchBible
 
 
 @unittest.skipUnless(
@@ -17,7 +17,7 @@ class TestLiveSearch(unittest.TestCase):
         response = self.bible.search(
             "in the beginning",
             "kjv",
-            SearchCriteria(words="phrase", limit=5),
+            SearchBible(words="phrase", limit=5),
         )
         self.assertGreater(response["query"]["total"], 0)
         self.assertEqual(len(response["query"]["sha"]), 40)
@@ -28,7 +28,7 @@ class TestLiveSearch(unittest.TestCase):
         response = self.bible.search(
             "Jesus Christ",
             "kjv",
-            SearchCriteria(words="phrase", scope="new_testament", limit=10),
+            SearchBible(words="phrase", scope="new_testament", limit=10),
         )
         self.assertGreater(response["query"]["total"], 0)
         self.assertTrue(

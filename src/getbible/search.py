@@ -26,8 +26,8 @@ _VALID_SORT = frozenset({"canonical", "relevance"})
 
 
 @dataclass(frozen=True, slots=True)
-class SearchCriteria:
-    """Validated, serializable search behavior."""
+class SearchBible:
+    """Validated, serializable Bible search behavior."""
 
     MAX_LIMIT: ClassVar[int] = 1000
     words: str = "all"
@@ -60,8 +60,8 @@ class SearchCriteria:
     @classmethod
     def from_value(
         cls,
-        value: SearchCriteria | Mapping[str, Any] | str | None,
-    ) -> SearchCriteria:
+        value: SearchBible | Mapping[str, Any] | str | None,
+    ) -> SearchBible:
         if value is None:
             return cls()
         if isinstance(value, cls):
@@ -70,7 +70,7 @@ class SearchCriteria:
             return cls.from_legacy(value)
         if not isinstance(value, Mapping):
             raise SearchValidationError(
-                "Search criteria must be a SearchCriteria object, mapping, or legacy string."
+                "Search criteria must be a SearchBible object, mapping, or legacy string."
             )
         allowed = {
             "words", "match", "case_sensitive", "scope", "books", "diacritics",
@@ -87,7 +87,7 @@ class SearchCriteria:
             raise SearchValidationError(str(error)) from error
 
     @classmethod
-    def from_legacy(cls, value: str) -> SearchCriteria:
+    def from_legacy(cls, value: str) -> SearchBible:
         parts = value.split("-")
         if len(parts) != 4:
             raise SearchValidationError(f"Invalid legacy search criteria '{value}'.")
@@ -119,7 +119,7 @@ class SearchCriteria:
             )
         raise SearchValidationError(f"Invalid legacy search criteria '{value}'.")
 
-    def with_pagination(self, limit: int, offset: int) -> SearchCriteria:
+    def with_pagination(self, limit: int, offset: int) -> SearchBible:
         return replace(self, limit=limit, offset=offset)
 
     def to_dict(self) -> dict[str, Any]:
@@ -169,6 +169,10 @@ class SearchCriteria:
             )
         if not isinstance(self.offset, int) or isinstance(self.offset, bool) or self.offset < 0:
             raise SearchValidationError("offset must be a non-negative integer.")
+
+
+# Compatibility for integrations that adopted the pre-1.2 development name.
+SearchCriteria = SearchBible
 
 
 @dataclass(frozen=True, slots=True)
@@ -339,7 +343,7 @@ class SearchEngine:
     def search(
         self,
         query: str,
-        criteria: SearchCriteria,
+        criteria: SearchBible,
     ) -> tuple[list[SearchHit], int]:
         if not isinstance(query, str):
             raise SearchValidationError("Search query must be a string.")
@@ -404,7 +408,7 @@ class SearchEngine:
         index: SearchIndex,
         term: str,
         book_filter: frozenset[int],
-        criteria: SearchCriteria,
+        criteria: SearchBible,
     ) -> tuple[list[SearchHit], int]:
         selected: list[SearchHit] = []
         whole_corpus = book_filter == self.corpus.available_books
@@ -432,7 +436,7 @@ class SearchEngine:
             total = matched_position
         return selected, total
 
-    def _book_filter(self, criteria: SearchCriteria) -> frozenset[int]:
+    def _book_filter(self, criteria: SearchBible) -> frozenset[int]:
         if criteria.scope == "old_testament":
             scoped = {book for book in self.corpus.available_books if 1 <= book <= 39}
         elif criteria.scope == "new_testament":
@@ -451,7 +455,7 @@ class SearchEngine:
 class _Matcher:
     def __init__(
         self,
-        criteria: SearchCriteria,
+        criteria: SearchBible,
         query: str,
         terms: tuple[str, ...],
         excluded: tuple[str, ...],

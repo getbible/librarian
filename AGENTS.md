@@ -19,6 +19,7 @@ The primary project home remains <https://git.vdm.dev/getBible/librarian>. GitHu
 - `GetBible.select()` returns the established chapter-keyed dictionary.
 - `GetBible.scripture()` returns that same dictionary encoded as JSON.
 - `GetBible.search()` returns an envelope containing `query`, `results`, and `matches`.
+- `SearchBible` is the canonical public class for configuring search behavior.
 - `search()["results"]` must retain the same chapter and verse object structure as `select()`.
 - Additive metadata is allowed. Removing or renaming existing scripture fields requires an explicit compatibility decision and migration documentation.
 - Translation abbreviations are lowercase API identifiers and must be validated with a full match.
