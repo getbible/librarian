@@ -47,7 +47,22 @@ jobs:
         run: python -m compileall -q src tests
 
       - name: Run deterministic tests
-        run: python -m unittest discover -s tests -v
+        run: |
+          set +e
+          python -m unittest discover -s tests -v > test-output.log 2>&1
+          status=$?
+          if [ "$status" -ne 0 ]; then
+            tail -n 200 test-output.log
+          fi
+          exit "$status"
+
+      - name: Upload test failure log
+        if: failure()
+        uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08 # v4.6.0
+        with:
+          name: test-failure-python-${{ matrix.python-version }}
+          path: test-output.log
+          if-no-files-found: error
 
   quality:
     name: Quality and package
@@ -73,7 +88,23 @@ jobs:
           python -m pip install -r requirements-dev.txt
 
       - name: Lint
-        run: ruff check src tests benchmarks scripts examples
+        run: |
+          set +e
+          ruff check src tests benchmarks scripts examples --output-format=concise \
+            > quality-output.log 2>&1
+          status=$?
+          if [ "$status" -ne 0 ]; then
+            cat quality-output.log
+          fi
+          exit "$status"
+
+      - name: Upload quality failure log
+        if: failure()
+        uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08 # v4.6.0
+        with:
+          name: quality-failure
+          path: quality-output.log
+          if-no-files-found: error
 
       - name: Static security scan
         run: bandit -q -r src/getbible -x src/getbible/data
