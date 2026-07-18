@@ -110,10 +110,28 @@ bible = GetBible(
 
 Cache replacements are checksum-verified, process-locked, and atomic. A last-known-good translation remains available during temporary repository failures unless `strict_freshness=True`.
 
+Production caches are bounded by default. A service can warm its expected
+translation without issuing an artificial query and can expose cache counters to
+its internal metrics system:
+
+```python
+bible = GetBible(
+    cache_dir="/var/cache/getbible",
+    search_corpus_limit=4,
+    translation_cache_limit=4,
+)
+bible.warm_translation("kjv")
+cache_state = bible.cache_info()
+```
+
+Call `bible.close()` during worker shutdown, or use `GetBible` as a context
+manager in short-lived scripts.
+
 ## Documentation
 
 - [Usage and reference retrieval](docs/USAGE.md)
 - [Search criteria and response contract](docs/SEARCH.md)
+- [HTTP GET endpoint integration](docs/API_INTEGRATION.md)
 - [Cache validation and retention](docs/CACHING.md)
 - [Architecture](docs/ARCHITECTURE.md)
 - [Multi-worker operations](docs/OPERATIONS.md)

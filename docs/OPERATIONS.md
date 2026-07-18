@@ -36,11 +36,11 @@ Librarian detects process changes and does not reuse an HTTP session created by 
 To share as much read-only memory as the operating system permits, a deployment may warm its most-used translation and default index before forking:
 
 ```python
-from getbible import GetBible, SearchBible
+from getbible import GetBible
 
 
 bible = GetBible(cache_dir="/var/cache/getbible")
-bible.search("the", "kjv", SearchBible(limit=1))
+bible.warm_translation("kjv")
 ```
 
 Whether preloading is beneficial depends on the server, worker lifecycle, and available memory. Benchmark both preloaded and per-worker warm-up configurations.
@@ -54,6 +54,30 @@ Repository sessions are thread-local. Normal cache reads are concurrent. Missing
 The first search for a translation includes disk or network loading, JSON parsing, corpus construction, and index construction. Warm the expected translation before marking a newly started worker ready when startup latency matters.
 
 Do not warm every case and diacritic variant unless production traffic requires them; each variant consumes additional memory.
+
+`warm_translation()` accepts `case_sensitive` and `diacritics` when a non-default
+index is known to be common:
+
+```python
+bible.warm_translation("kjv", case_sensitive=True, diacritics="insensitive")
+```
+
+## Bounded memory
+
+Every growing process-local cache is bounded by default:
+
+| Cache | Constructor argument | Default entries |
+|---|---|---:|
+| Parsed references | `reference_cache_limit` | 5,000 |
+| Translation book lists | `books_cache_limit` | 64 |
+| Retrieved chapters | `chapter_cache_limit` | 2,048 |
+| Full search corpora and indexes | `search_corpus_limit` | 4 |
+| Validated translation snapshots | `translation_cache_limit` | 4 |
+
+These limits apply to each worker process, not to the whole deployment. Size
+worker memory for the largest translations and index variants actually served.
+Use `0` to disable retention or `None` for an unbounded cache. Avoid `None` for
+full translations and corpora in a public multi-translation service.
 
 ## Pagination limits
 
@@ -81,6 +105,25 @@ The API layer should record:
 - worker memory after each newly loaded translation/index mode;
 - search totals and response sizes;
 - rate limiting and rejected criteria.
+
+`cache_info()` provides JSON-safe sizes, limits, hit/miss/eviction counters,
+loaded translation SHA values, stale flags, and currently built index variants.
+It deliberately excludes verse text, source paths, and search terms:
+
+```python
+state = bible.cache_info()
+metrics.gauge("librarian.search_corpora", state["search_corpora"]["size"])
+metrics.counter("librarian.search_evictions", state["search_corpora"]["evictions"])
+```
+
+Read these counters periodically or at worker shutdown. Do not call
+`cache_info()` on every public request solely for logging.
+
+## Shutdown
+
+Call `bible.close()` from the worker/application shutdown hook after request
+threads have stopped. It closes every HTTP session created by that process.
+Short-lived scripts can use `GetBible` as a context manager.
 
 Do not log complete private caller context. Scripture queries themselves are generally safe, but operational logging policy remains the responsibility of the API service.
 

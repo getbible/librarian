@@ -16,12 +16,30 @@ bible = GetBible(
     request_retries=3,
     cache_dir="/var/cache/getbible",
     strict_freshness=False,
+    reference_cache_limit=5000,
+    books_cache_limit=64,
+    chapter_cache_limit=2048,
+    search_corpus_limit=4,
+    translation_cache_limit=4,
+    cache_ttl_jitter=0.1,
 )
 ```
 
 All constructor arguments are optional. The defaults use GetBible API v2 and the operating system's user cache directory.
 
 For services, construct a long-lived client rather than one client per request. The client is safe for concurrent threads, and each process receives fork-safe HTTP sessions.
+
+The cache limits are per process. Set a limit to `0` to disable that in-memory
+cache or to `None` for unbounded retention. Unbounded full translations or
+search corpora are not recommended in long-running public services.
+
+Close network sessions during orderly shutdown:
+
+```python
+bible.close()
+```
+
+Short-lived scripts may instead use `with GetBible() as bible:`.
 
 ## Select verses as a dictionary
 

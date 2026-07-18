@@ -32,6 +32,9 @@ The primary project home remains <https://git.vdm.dev/getBible/librarian>. GitHu
 - Disk replacements must be atomic and coordinated between worker processes.
 - Network sessions must not be reused across a process fork.
 - Keep loaded translation corpora immutable. Build alternative normalized search indexes lazily.
+- Preserve bounded process-local caches and reference-counted keyed locks; public API workloads must not grow memory solely because new keys or translations are requested.
+- Preserve `warm_translation()`, JSON-safe `cache_info()`, and orderly `close()` behavior when changing repository or cache internals.
+- When a validated source SHA is unchanged, retain the existing corpus and built indexes while updating freshness metadata.
 - Preserve the lightweight chapter path for reference-only requests; do not download an entire translation for `select()`.
 - Never expose raw user regular expressions through the search API.
 - Keep default tests deterministic and independent of the live API.

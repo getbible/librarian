@@ -7,6 +7,8 @@
 - `select()` and `scripture()` use chapter retrieval.
 - `search()` and `search_json()` use a full-translation corpus.
 - `valid_reference()` and `valid_translation()` expose validation helpers.
+- `warm_translation()` performs explicit corpus/index warm-up without a fake query.
+- `cache_info()` and `close()` support service monitoring and orderly shutdown.
 
 ## Modules
 
@@ -64,6 +66,8 @@ Exact whole-word queries use postings rather than scanning every verse. Partial-
 - One thread builds a missing corpus or normalization index; other threads reuse the result.
 - One process downloads or replaces a disk translation at a time.
 - HTTP sessions are thread-local and carry the process ID, so a pre-fork worker creates a new session after the fork.
+- Cache and lock registries use bounded or reference-counted retention so translation churn does not grow worker memory indefinitely.
+- Unchanged source SHAs update corpus freshness without replacing immutable verse records or indexes.
 - No per-instance maintenance thread exists.
 
 ## Compatibility boundary
