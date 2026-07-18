@@ -107,7 +107,22 @@ jobs:
           if-no-files-found: error
 
       - name: Static security scan
-        run: bandit -q -r src/getbible -x src/getbible/data
+        run: |
+          set +e
+          bandit -q -r src/getbible -x src/getbible/data > security-output.log 2>&1
+          status=$?
+          if [ "$status" -ne 0 ]; then
+            cat security-output.log
+          fi
+          exit "$status"
+
+      - name: Upload security failure log
+        if: failure()
+        uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08 # v4.6.0
+        with:
+          name: security-failure
+          path: security-output.log
+          if-no-files-found: error
 
       - name: Dependency vulnerability scan
         run: python -m pip_audit
