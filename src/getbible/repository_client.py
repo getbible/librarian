@@ -267,7 +267,7 @@ class RepositoryClient:
         minimum: float,
         maximum: float,
     ) -> float:
-        if not isinstance(value, (int, float)) or isinstance(value, bool):
+        if not isinstance(value, int | float) or isinstance(value, bool):
             raise TypeError(f"{name} must be numeric.")
         numeric = float(value)
         if not minimum <= numeric <= maximum:
