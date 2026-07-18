@@ -1,0 +1,86 @@
+name: One-time Bandit source fix
+
+on:
+  push:
+    branches: [agent/librarian-hardening-20260718]
+
+permissions:
+  contents: write
+
+concurrency:
+  group: one-time-bandit-fix
+  cancel-in-progress: false
+
+jobs:
+  patch:
+    if: github.event.head_commit.message != 'Apply explicit checksum semantics'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout branch
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: agent/librarian-hardening-20260718
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@42375524e23c412d93fb67b49958b491fce71c38 # v5.4.0
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements-dev.txt
+
+      - name: Apply exact source changes
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          replacements = {
+              Path("src/getbible/getbible.py"): [
+                  (
+                      "hashlib.sha1(raw).hexdigest()",
+                      "hashlib.sha1(raw, usedforsecurity=False).hexdigest()",
+                      1,
+                  ),
+              ],
+              Path("src/getbible/translation_cache.py"): [
+                  (
+                      "hashlib.sha1(raw).hexdigest()",
+                      "hashlib.sha1(raw, usedforsecurity=False).hexdigest()",
+                      2,
+                  ),
+              ],
+              Path("src/getbible/search.py"): [
+                  ("_TOKEN_CLASS", "_WORD_CHARACTER_CLASS", 4),
+              ],
+          }
+
+          for path, changes in replacements.items():
+              text = path.read_text(encoding="utf-8")
+              for old, new, expected in changes:
+                  actual = text.count(old)
+                  if actual != expected:
+                      raise SystemExit(
+                          f"{path}: expected {expected} occurrences of {old!r}, found {actual}"
+                      )
+                  text = text.replace(old, new)
+              path.write_text(text, encoding="utf-8")
+          PY
+
+      - name: Validate complete repository
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements-dev.txt
+          python -m compileall -q src tests
+          ruff check src tests benchmarks scripts examples
+          bandit -q -r src/getbible -x src/getbible/data
+          python -m unittest discover -s tests -v
+
+      - name: Commit validated source fixes
+        run: |
+          test -n "$(git status --porcelain)"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src/getbible/getbible.py src/getbible/search.py src/getbible/translation_cache.py
+          git commit -m "Apply explicit checksum semantics"
+          git push origin HEAD:agent/librarian-hardening-20260718
