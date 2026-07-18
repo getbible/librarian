@@ -1,152 +1,107 @@
-# getBible Librarian
+# GetBible Librarian
 
 [![Stable Librarian](https://github.com/getbible/librarian/actions/workflows/stable-librarian.yml/badge.svg)](https://github.com/getbible/librarian/actions/workflows/stable-librarian.yml)
-[![GetBible Librarian](https://img.shields.io/pypi/v/getbible?style=flat-square)](https://pypi.org/project/getbible/)
+[![PyPI](https://img.shields.io/pypi/v/getbible?style=flat-square)](https://pypi.org/project/getbible/)
 
-The `getBible` Librarian package is a Python library designed for efficiently retrieving the scripture reference across various translations.
+`getbible` retrieves Scripture from a GetBible v2 repository and parses localized Bible references. Version 1.2 adds strict input validation, bounded work, typed failures, explicit network timeouts and retries, and bounded thread-safe caches.
 
 ## Installation
 
 ```bash
-pip install getbible
+python -m pip install getbible
 ```
-> see package on [pypi](https://pypi.org/project/getbible)
 
-## Features
+Python 3.9 or newer is required.
 
-### Get Scripture
+## Basic use
 
 ```python
-import json
 from getbible import GetBible
 
-# Initialize the class
-getbible = GetBible()
-
-# Get the scripture as JSON
-scripture_json = getbible.scripture("Genesis 1:1")
-print(scripture_json)  # Outputs the JSON scripture as a string.
-
-# Get the scripture as dictionary
-scripture_dict = getbible.select("Genesis 1:1")
-print(json.dumps(scripture_dict, indent=4))  # Pretty-prints the dictionary.
+with GetBible() as scriptures:
+    result = scriptures.select("John 3:16", "kjv")
+    print(result)
 ```
 
-#### Using Translation Abbreviations
-
-When utilizing the `GetBible` class to look up a reference, you can use the lowercase abbreviations of the target translation:
+Multiple references are separated with semicolons:
 
 ```python
-import json
-from getbible import GetBible
-
-# Initialize the class
-getbible = GetBible()
-
-scripture = getbible.select("Genesis 1:1-5", 'aov')
-print(json.dumps(scripture, indent=4))  # Pretty-prints the dictionary.
+result = scriptures.select("Genesis 1:1-3;John 1:1", "kjv")
 ```
 
-In this code snippet, `"aov"` is used as the abbreviation for the Afrikaans Ou Vertaaling.
-
-### Get Reference
+The default safety budget is eight references and 200 selected verses per request. These limits are configurable, but callers exposed to untrusted input should normally reduce them rather than increase them.
 
 ```python
-from getbible import GetBibleReference
-
-# Initialize the class
-get = GetBibleReference()
-
-# Find well form reference
-reference = get.ref("Genesis 1:1-5")
-print(reference)  # Outputs the dataclass [BookReference] { book: int, chapter: int, verses: list }
+scriptures = GetBible(
+    max_references=8,
+    max_total_verses=100,
+    connect_timeout=3.05,
+    read_timeout=10.0,
+    retries=2,
+)
 ```
 
-#### Using Translation Abbreviations
+## Local repository
 
-When utilizing the `GetBibleReference` class to look up a reference, you can use the lowercase abbreviations of the target translation:
+A local GetBible v2 data tree removes the network dependency:
 
 ```python
-from getbible import GetBibleReference
-
-# Initialize the class
-get = GetBibleReference()
-
-reference = get.ref("Genesis 1:1-5", 'kjv')
+scriptures = GetBible(repo_path="/srv/getbible-data", version="v2")
 ```
 
-In this code snippet, `"kjv"` is used as the abbreviation for the King James Version to speedup the search.
+`repo_path` must contain paths such as `v2/kjv/books.json` and `v2/kjv/43/3.json`.
 
-### Get Book Number
+## Validation
+
+Reference parsing consumes the complete input. Malformed suffixes, dangling ranges, reversed ranges, excessive ranges, control characters, and unknown books are rejected rather than silently converted to another verse.
 
 ```python
-from getbible import GetBibleBookNumber
+from getbible import GetBibleReference, InvalidReferenceError
 
-# Initialize the class
-get_book = GetBibleBookNumber()
+parser = GetBibleReference(max_verses=100)
 
-# Find a book number
-book_number = get_book.number("Genesis")
-print(book_number)  # Outputs the book number of "Genesis" = 1
+try:
+    reference = parser.ref("1 John 3:16,19-21", "kjv")
+except InvalidReferenceError as error:
+    print(error)
 ```
 
-#### Available Translations and Abbreviations
+`GetBible.available_translations` returns the locally known translation codes without performing network I/O. `valid_translation()` first requires membership in that local set and only then checks the configured repository.
 
-The `GetBibleBookNumber` package supports a range of Bible translations, each identified by a lowercase abbreviation. These abbreviations and the corresponding translation data are stored in the `data` folder.
-
-#### Finding Translation Abbreviations
-
-To find the available translation abbreviations:
-
-1. Go to the `data` [directory in the package](https://git.vdm.dev/getBible/librarian/src/branch/master/src/getbible/data).
-2. Each JSON file in this directory corresponds to a different translation.
-3. The file name (without the `.json` extension) represents the abbreviation for that translation.
-
-For instance, if you find a file named `kjv.json`, then `kjv` is the abbreviation for the King James Version translation.
-
-#### Using Translation Abbreviations
-
-When utilizing the `GetBibleBookNumber` class to look up a book number, you should use these lowercase abbreviations:
+## Typed errors
 
 ```python
-book_number = get_book.number("Gen", "kjv", ["aov", "swahili"])
+from getbible import (
+    DataValidationError,
+    InvalidReferenceError,
+    ScriptureNotFoundError,
+    TranslationNotFoundError,
+    UpstreamUnavailableError,
+)
 ```
 
-In this code snippet, `"kjv"` is used as the abbreviation for the King James Version, `"aov"` for the Afrikaans Ou Vertaaling, and `"swahili"` for the Swahili Version.
+Applications should convert these exceptions into their own user-safe messages. Do not expose raw exception details from unexpected failures to public users.
 
-## Source Installation (git)
-
-To install `getBible` Librarian, you need to clone the repository and install the package manually. Ensure you have Python 3.7 or higher installed.
+## Development
 
 ```bash
-git clone https://git.vdm.dev/getBible/librarian.git
+git clone https://github.com/getbible/librarian.git
 cd librarian
-pip install .
+python -m venv .venv
+source .venv/bin/activate
+python -m pip install -e . -r requirements-dev.txt
+python -m unittest discover -s tests -v
+ruff check src tests
+bandit -q -r src/getbible
+pip-audit -r requirements.txt
 ```
 
-## Development and Testing
+The default test suite is offline and deterministic. Network integration checks should be run separately against a controlled GetBible endpoint.
 
-To contribute or run tests, clone the repository and set up a virtual environment:
+## Security
 
-```bash
-git clone https://git.vdm.dev/getBible/librarian.git
-cd librarian
-python -m venv venv
-source venv/bin/activate  # On Windows use `venv\Scripts\activate`
-pip install -e .
-```
-
-Run tests using the standard unittest framework:
-
-```bash
-python -m unittest
-```
-
-## Contributing
-
-Contributions to the `getbible` Librarian package are welcome. Please ensure to follow the coding standards and write tests for new features.
+Please report vulnerabilities privately as described in [SECURITY.md](SECURITY.md). The parser and client have hard safety limits, but every public application must also apply user, chat, and global rate limits.
 
 ## License
 
-This project is licensed under the GNU GPL v2.0. See the LICENSE file for more details.
-
+GNU GPL v2.0. See [LICENSE](LICENSE).
