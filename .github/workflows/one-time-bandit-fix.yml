@@ -52,7 +52,7 @@ jobs:
                   ),
               ],
               Path("src/getbible/search.py"): [
-                  ("_TOKEN_CLASS", "_WORD_CHARACTER_CLASS", 4),
+                  ("_TOKEN_CLASS", "_WORD_CHARACTER_CLASS", 6),
               ],
           }
 
