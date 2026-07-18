@@ -16,8 +16,8 @@ import regex
 from .exceptions import CacheIntegrityError, SearchValidationError
 from .translation_cache import TranslationSnapshot
 
-_TOKEN_CLASS = r"\p{L}\p{M}\p{N}"
-_TOKEN = regex.compile(rf"[{_TOKEN_CLASS}]+(?:['’][{_TOKEN_CLASS}]+)*")
+_WORD_CHARACTER_CLASS = r"\p{L}\p{M}\p{N}"
+_TOKEN = regex.compile(rf"[{_WORD_CHARACTER_CLASS}]+(?:['’][{_WORD_CHARACTER_CLASS}]+)*")
 _VALID_WORDS = frozenset({"all", "any", "phrase"})
 _VALID_MATCH = frozenset({"whole_word", "substring"})
 _VALID_SCOPE = frozenset({"bible", "old_testament", "new_testament", "deuterocanon"})
@@ -625,10 +625,10 @@ class _Matcher:
         return False
 
     def _phrase_pattern(self, terms: Sequence[str]) -> regex.Pattern[str]:
-        separator = rf"[^{_TOKEN_CLASS}]+"
+        separator = rf"[^{_WORD_CHARACTER_CLASS}]+"
         body = separator.join(regex.escape(term) for term in terms)
         return regex.compile(
-            rf"(?<![{_TOKEN_CLASS}]){body}(?![{_TOKEN_CLASS}])"
+            rf"(?<![{_WORD_CHARACTER_CLASS}]){body}(?![{_WORD_CHARACTER_CLASS}])"
         )
 
 
