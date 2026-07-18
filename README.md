@@ -89,6 +89,21 @@ response = bible.search(
 )
 ```
 
+## Official HTTP services
+
+Librarian powers two independent read-only API services:
+
+```text
+GET https://query.getbible.net/v2/{translation}/{reference}
+GET https://search.getbible.net/v2/{translation}?q={query}
+```
+
+Query uses the lightweight `select()` path and does not expose search. Search
+uses `search()` and accepts filtering through URL query parameters; it does not
+expose reference routes or POST requests. See
+[HTTP GET service integration](docs/API_INTEGRATION.md) for the complete
+parameter mapping, response contracts, cache separation, and deployment model.
+
 ## Cache behavior
 
 Reference retrieval keeps the lightweight chapter request path. Search downloads the selected full translation once, verifies it against `/v2/{translation}.sha`, and builds a compact in-memory postings index.
@@ -131,7 +146,7 @@ manager in short-lived scripts.
 
 - [Usage and reference retrieval](docs/USAGE.md)
 - [Search criteria and response contract](docs/SEARCH.md)
-- [HTTP GET endpoint integration](docs/API_INTEGRATION.md)
+- [Separate Query and Search HTTP integration](docs/API_INTEGRATION.md)
 - [Cache validation and retention](docs/CACHING.md)
 - [Architecture](docs/ARCHITECTURE.md)
 - [Multi-worker operations](docs/OPERATIONS.md)

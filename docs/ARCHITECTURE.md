@@ -73,3 +73,11 @@ Exact whole-word queries use postings rather than scanning every verse. Partial-
 ## Compatibility boundary
 
 The grouped chapter object is the compatibility boundary. Search wraps this structure under `results` and adds `query` and `matches`. Existing verse dictionaries are returned without modifying their API fields or text.
+
+## HTTP deployment boundary
+
+Librarian supplies both capabilities, but the official HTTP layer deliberately
+separates them. Query maps `GET /v2/{translation}/{reference}` to `select()`;
+Search maps `GET /v2/{translation}?q=...` to `search()`. They run with separate
+process and cache budgets. The earlier combined `/v2/search/{translation}`
+shape is not part of the supported deployment contract.

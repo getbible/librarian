@@ -18,6 +18,7 @@ All notable project changes are documented here.
 
 ### Changed
 
+- Documented independent `query.getbible.net` reference and `search.getbible.net` search service contracts, including GET-only filtering, cache isolation, and local/remote repository operation.
 - Replaced per-instance monthly cache threads with lazy seven-day freshness validation.
 - Added thread-local, retrying HTTP sessions that are recreated after process forks.
 - Made reference caching translation-aware and genuinely least-recently-used.

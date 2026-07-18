@@ -1,6 +1,8 @@
 # Multi-worker API operations
 
-Librarian is designed to be held as a long-lived application dependency in each API worker.
+Librarian is designed to be held as a long-lived application dependency in
+each API worker. Deploy the reference Query and full-text Search APIs as
+independent services so search CPU and memory cannot consume Query capacity.
 
 ## Client lifetime
 
@@ -21,7 +23,10 @@ def execute_search_query(query: str, translation: str, criteria: dict) -> dict:
     return bible.search(query, translation, criteria)
 ```
 
-The example functions are framework-neutral and can be called by Flask, Django, FastAPI, or another WSGI/ASGI endpoint.
+The example functions are framework-neutral and can be called by Flask, Django,
+FastAPI, or another WSGI/ASGI endpoint. They illustrate Librarian calls only;
+the official deployment places them in separate processes and writable cache
+directories.
 
 ## Worker processes
 
@@ -79,6 +84,12 @@ worker memory for the largest translations and index variants actually served.
 Use `0` to disable retention or `None` for an unbounded cache. Avoid `None` for
 full translations and corpora in a public multi-translation service.
 
+For a Query-only process, set `search_corpus_limit=0` and
+`translation_cache_limit=0`. For a Search-only process, set
+`reference_cache_limit=0` and `chapter_cache_limit=0`, then choose small corpus
+and translation limits based on measured worker RSS. Both services can read the
+same local API mirror but should never share a writable cache directory.
+
 ## Pagination limits
 
 The library restricts a page to 1,000 matches. The API layer may impose a smaller public maximum. Exact totals are reported independently of the returned page.
@@ -125,7 +136,9 @@ Call `bible.close()` from the worker/application shutdown hook after request
 threads have stopped. It closes every HTTP session created by that process.
 Short-lived scripts can use `GetBible` as a context manager.
 
-Do not log complete private caller context. Scripture queries themselves are generally safe, but operational logging policy remains the responsibility of the API service.
+Do not log complete private caller context. In particular, keep raw search text
+out of application and reverse-proxy logs by default; record request IDs,
+lengths, counts, status, and timing instead.
 
 ## Benchmarking
 
