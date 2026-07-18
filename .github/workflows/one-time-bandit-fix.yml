@@ -1,8 +1,9 @@
 name: One-time Bandit source fix
 
 on:
-  push:
-    branches: [agent/librarian-hardening-20260718]
+  pull_request:
+    branches: [staging]
+    types: [opened, synchronize, reopened]
 
 permissions:
   contents: write
@@ -13,7 +14,7 @@ concurrency:
 
 jobs:
   patch:
-    if: github.event.head_commit.message != 'Apply explicit checksum semantics'
+    if: github.head_ref == 'agent/librarian-hardening-20260718'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
