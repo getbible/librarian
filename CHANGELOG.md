@@ -15,6 +15,9 @@ All notable project changes are documented here.
 - Repository architecture, operations, caching, search, usage, and release documentation.
 - Explicit translation/index warm-up, JSON-safe cache telemetry, and orderly HTTP session shutdown APIs.
 - Configurable bounded LRU retention for references, books, chapters, translation snapshots, and search corpora.
+- Typed reference, work-budget, translation, timeout, and oversized-response exceptions.
+- Request-level reference, verse, search-pagination, and response-body budgets.
+- Bounded negative translation caching and parser fuzz/regression coverage.
 
 ### Changed
 
@@ -29,6 +32,8 @@ All notable project changes are documented here.
 - Added deterministic per-worker freshness jitter to spread repository checks without extending the configured cache TTL.
 - Unchanged translation SHAs now preserve existing corpora and built search indexes instead of decoding and rebuilding them.
 - Replaced permanently retained keyed locks with reference-counted per-resource coordination.
+- Repository downloads now stream into a finite byte budget and validate path, timeout, retry, and backoff configuration.
+- CI now compiles every source file and runs static security and dependency-advisory scans without removing any existing test or package checks.
 
 ### Fixed
 
@@ -36,6 +41,9 @@ All notable project changes are documented here.
 - Chapter and translation cache updates can no longer replace valid data with partial or checksum-mismatched downloads.
 - PyPI publication no longer runs on every push to `master`.
 - Concurrent cache eviction no longer invalidates active searches, and HTTP sessions can now be released explicitly at worker shutdown.
+- Verse ranges are bounded before `range()` is materialized, closing a remote memory-exhaustion path.
+- Reversed and malformed ranges fail closed instead of returning a different verse.
+- Cached `BookReference.verses` lists can no longer be mutated by callers.
 
 ## [1.1.2] - 2023-12-11
 
