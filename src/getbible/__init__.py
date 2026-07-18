@@ -1,14 +1,19 @@
 from .exceptions import (
     CacheIntegrityError,
     GetBibleError,
+    ReferenceValidationError,
     RepositoryError,
     RepositoryResourceNotFound,
     RepositoryResponseError,
+    RepositoryResponseTooLarge,
+    RepositoryTimeoutError,
+    RequestLimitError,
     SearchValidationError,
+    TranslationNotFoundError,
 )
-from .getbible import GetBible
 from .getbible_book_number import GetBibleBookNumber
 from .getbible_reference import BookReference, GetBibleReference
+from .hardened import GetBible, RequestLimits
 from .search import SearchBible, SearchCriteria
 
 __all__ = [
@@ -18,10 +23,16 @@ __all__ = [
     "GetBibleBookNumber",
     "GetBibleError",
     "GetBibleReference",
+    "ReferenceValidationError",
     "RepositoryError",
     "RepositoryResourceNotFound",
     "RepositoryResponseError",
-    "SearchValidationError",
+    "RepositoryResponseTooLarge",
+    "RepositoryTimeoutError",
+    "RequestLimitError",
+    "RequestLimits",
     "SearchBible",
     "SearchCriteria",
+    "SearchValidationError",
+    "TranslationNotFoundError",
 ]

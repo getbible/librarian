@@ -34,9 +34,11 @@ classifiers = [
 
 [project.optional-dependencies]
 dev = [
-  "build>=1.2",
-  "ruff>=0.8",
-  "twine>=5",
+  "bandit>=1.7,<2",
+  "build>=1.2,<2",
+  "pip-audit>=2.7,<3",
+  "ruff>=0.8,<1",
+  "twine>=5,<7",
 ]
 
 [project.urls]
@@ -67,3 +69,6 @@ select = ["E", "F", "I", "UP", "B", "SIM"]
 [tool.ruff.lint.per-file-ignores]
 "tests/*" = ["B011"]
 "tests/test_getbible*.py" = ["E501"]
+
+[tool.bandit]
+exclude_dirs = ["tests", "src/getbible/data"]
