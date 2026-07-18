@@ -1,165 +1,210 @@
-import re
-from getbible import GetBibleBookNumber
+"""Strict, bounded parsing of Bible references."""
+
+from collections import OrderedDict
 from dataclasses import dataclass
-from typing import Optional, Tuple
+import re
+import threading
+import unicodedata
+from typing import List, Optional, Tuple
+
+from getbible.errors import InvalidReferenceError
+from getbible.getbible_book_number import GetBibleBookNumber
 
 
-@dataclass
+@dataclass(frozen=True)
 class BookReference:
+    """Canonical location selected by one user reference."""
+
     book: int
     chapter: int
-    verses: list
+    verses: List[int]
     reference: str
 
 
 class GetBibleReference:
-    def __init__(self):
-        self.__get_book = GetBibleBookNumber()
-        self.__pattern = re.compile(r'[\w\s,:-]{1,50}', re.UNICODE)
-        self.__cache = {}
-        self.__cache_limit = 5000
+    """Parse references without accepting partial or computationally unbounded input."""
+
+    DEFAULT_MAX_REFERENCE_LENGTH = 128
+    DEFAULT_MAX_VERSES = 200
+    DEFAULT_MAX_CHAPTER = 999
+    DEFAULT_MAX_VERSE = 999
+    DEFAULT_CACHE_LIMIT = 5000
+
+    _VERSE_LIST = re.compile(
+        r"\d{1,4}(?:\s*-\s*\d{1,4})?"
+        r"(?:\s*,\s*\d{1,4}(?:\s*-\s*\d{1,4})?)*"
+    )
+    _TRAILING_CHAPTER = re.compile(r"(?P<chapter>\d{1,4})\s*$")
+    _SPACE = re.compile(r"\s+")
+    _ALLOWED_BOOK_PUNCTUATION = frozenset({" ", ".", "-", "'", "’", "ʻ", "ʼ", "־"})
+
+    def __init__(
+        self,
+        max_reference_length: int = DEFAULT_MAX_REFERENCE_LENGTH,
+        max_verses: int = DEFAULT_MAX_VERSES,
+        max_chapter: int = DEFAULT_MAX_CHAPTER,
+        max_verse: int = DEFAULT_MAX_VERSE,
+        cache_limit: int = DEFAULT_CACHE_LIMIT,
+        book_number_resolver: Optional[GetBibleBookNumber] = None,
+    ) -> None:
+        if min(max_reference_length, max_verses, max_chapter, max_verse, cache_limit) < 1:
+            raise ValueError("Parser limits must all be positive integers.")
+
+        self.__get_book = book_number_resolver or GetBibleBookNumber()
+        self.__max_reference_length = max_reference_length
+        self.__max_verses = max_verses
+        self.__max_chapter = max_chapter
+        self.__max_verse = max_verse
+        self.__cache_limit = cache_limit
+        self.__cache = OrderedDict()  # type: OrderedDict[str, BookReference]
+        self.__cache_lock = threading.RLock()
+
+    @property
+    def available_translations(self) -> frozenset:
+        """Return translation identifiers known by the bundled reference data."""
+
+        translations = getattr(self.__get_book, "translations", frozenset())
+        return frozenset(translations)
 
     def ref(self, reference: str, translation_code: Optional[str] = None) -> BookReference:
-        """
-        Fetch the BookReference from cache or create it if not present.
+        """Return a bounded canonical reference or raise ``InvalidReferenceError``."""
 
-        :param reference: Scripture reference string.
-        :param translation_code: Optional translation code.
-        :return: BookReference object.
-        :raises ValueError: If reference is invalid.
-        """
-        sanitized_ref = self.__sanitize(reference)
-        if not sanitized_ref:
-            raise ValueError(f"Invalid reference '{reference}'.")
-        if sanitized_ref not in self.__cache:
-            book_ref = self.__book_reference(reference, translation_code)
-            if book_ref is None:
-                raise ValueError(f"Invalid reference '{reference}'.")
-            self.__manage_local_cache(sanitized_ref, book_ref)
-        return self.__cache[sanitized_ref]
+        normalized_reference = self.__normalize_input(reference)
+        translation_key = (translation_code or "").strip().casefold()
+        cache_key = f"{translation_key}:{normalized_reference.casefold()}"
+
+        with self.__cache_lock:
+            cached = self.__cache.get(cache_key)
+            if cached is not None:
+                self.__cache.move_to_end(cache_key)
+                return cached
+
+        book_name, chapter, verses = self.__parse(normalized_reference)
+        book_number = self.__get_book.number(book_name, translation_code)
+        if not book_number:
+            raise InvalidReferenceError(f"Invalid reference '{reference}'.")
+
+        parsed = BookReference(
+            book=int(book_number),
+            chapter=chapter,
+            verses=verses,
+            reference=normalized_reference,
+        )
+        with self.__cache_lock:
+            self.__cache[cache_key] = parsed
+            self.__cache.move_to_end(cache_key)
+            while len(self.__cache) > self.__cache_limit:
+                self.__cache.popitem(last=False)
+        return parsed
 
     def valid(self, reference: str, translation_code: Optional[str] = None) -> bool:
-        """
-        Validate a scripture reference and check its presence in the cache.
+        """Return ``True`` only when the complete input parses successfully."""
 
-        :param reference: Scripture reference string.
-        :param translation_code: Optional translation code.
-        :return: True if valid and present, False otherwise.
-        """
-        sanitized_ref = self.__sanitize(reference)
-        if sanitized_ref is None:
-            return False
-        if sanitized_ref not in self.__cache:
-            book_ref = self.__book_reference(reference, translation_code)
-            self.__manage_local_cache(sanitized_ref, book_ref)
-        return self.__cache[sanitized_ref] is not None
-
-    def __sanitize(self, reference: str) -> Optional[str]:
-        """
-        Sanitize a scripture reference by validating and escaping it.
-
-        :param reference: The scripture reference to sanitize.
-        :return: Sanitized reference or None if invalid.
-        """
-        if self.__pattern.match(reference):
-            return re.escape(reference)
-        return None
-
-    def __book_reference(self, reference: str, translation_code: Optional[str] = None) -> Optional[BookReference]:
-        """
-        Create a BookReference object from a scripture reference.
-
-        :param reference: Scripture reference string.
-        :param translation_code: Optional translation code.
-        :return: BookReference object or None if invalid.
-        """
         try:
-            book_chapter, verses_portion = self.__split_reference(reference)
-            book_name = self.__extract_book_name(book_chapter)
-            book_number = self.__get_book_number(book_name, translation_code)
-            if not book_number:
-                return None
-            verses_arr = self.__get_verses_numbers(verses_portion)
-            chapter_number = self.__extract_chapter(book_chapter)
-            return BookReference(book=int(book_number), chapter=chapter_number, verses=verses_arr, reference=reference)
-        except Exception:
-            return None
+            self.ref(reference, translation_code)
+        except (InvalidReferenceError, TypeError, ValueError):
+            return False
+        return True
 
-    def __split_reference(self, reference: str) -> Tuple[str, str]:
-        """
-        Split a scripture reference into book chapter and verses portion.
+    def __normalize_input(self, reference: str) -> str:
+        if not isinstance(reference, str):
+            raise InvalidReferenceError("Reference must be text.")
+        normalized = unicodedata.normalize("NFC", reference).strip()
+        if not normalized or len(normalized) > self.__max_reference_length:
+            raise InvalidReferenceError(f"Invalid reference '{reference}'.")
+        if normalized.count(":") > 1:
+            raise InvalidReferenceError(f"Invalid reference '{reference}'.")
+        if any(unicodedata.category(character).startswith("C") for character in normalized):
+            raise InvalidReferenceError(f"Invalid reference '{reference}'.")
+        return normalized
 
-        :param reference: Scripture reference string.
-        :return: Tuple of book chapter and verses portion.
-        """
-        return reference.split(':', 1) if ':' in reference else (reference, '1')
+    def __parse(self, reference: str) -> Tuple[str, int, List[int]]:
+        if ":" in reference:
+            book_chapter, verses_portion = reference.rsplit(":", 1)
+            if not self._VERSE_LIST.fullmatch(verses_portion.strip()):
+                raise InvalidReferenceError(f"Invalid reference '{reference}'.")
+            verses = self.__parse_verses(verses_portion)
+        else:
+            book_chapter = reference
+            verses = [1]
 
-    def __extract_chapter(self, book_chapter: str) -> int:
-        """
-        Extract the chapter number from the book chapter part.
+        book_name, chapter = self.__parse_book_and_chapter(book_chapter, has_verse=":" in reference)
+        self.__validate_book_name(book_name, reference)
+        return book_name, chapter, verses
 
-        :param book_chapter: Book chapter part of the reference.
-        :return: Extracted chapter number.
-        """
-        chapter_match = re.search(r'\d+$', book_chapter)
-        return int(chapter_match.group()) if chapter_match else 1
+    def __parse_book_and_chapter(self, value: str, has_verse: bool) -> Tuple[str, int]:
+        value = value.strip()
+        if not value:
+            raise InvalidReferenceError("Reference is missing a book name.")
 
-    def __extract_book_name(self, book_chapter: str) -> str:
-        """
-        Extract the book name from the book chapter part.
+        # A bare number is a numeric book identifier with the default chapter.
+        if value.isdigit() and not has_verse:
+            return value, 1
 
-        :param book_chapter: Book chapter part of the reference.
-        :return: Extracted book name.
-        """
-        if book_chapter.isdigit():
-            # If the entire string is numeric, return it as is
-            return book_chapter.strip()
+        match = self._TRAILING_CHAPTER.search(value)
+        if match:
+            prefix = value[: match.start()].strip()
+            if prefix:
+                chapter = int(match.group("chapter"))
+                if chapter < 1 or chapter > self.__max_chapter:
+                    raise InvalidReferenceError(f"Chapter must be between 1 and {self.__max_chapter}.")
+                return self._SPACE.sub(" ", prefix), chapter
 
-        chapter_match = re.search(r'\d+$', book_chapter)
-        return book_chapter[:chapter_match.start()].strip() if chapter_match else book_chapter.strip()
+        if has_verse:
+            # ``Genesis:1`` is accepted as book Genesis, chapter 1. A numeric form
+            # such as ``1:1`` means numeric book 1, chapter 1.
+            if value.isdigit():
+                return value, 1
+            return self._SPACE.sub(" ", value), 1
 
-    def __get_verses_numbers(self, verses: str) -> list:
-        """
-        Convert a verses portion of a reference into a list of verse numbers.
+        return self._SPACE.sub(" ", value), 1
 
-        :param verses: Verses portion of the reference.
-        :return: List of verse numbers.
-        """
+    def __validate_book_name(self, book_name: str, original_reference: str) -> None:
+        if not book_name:
+            raise InvalidReferenceError(f"Invalid reference '{original_reference}'.")
+        for character in book_name:
+            category = unicodedata.category(character)
+            if category[0] in {"L", "M", "N"} or character in self._ALLOWED_BOOK_PUNCTUATION:
+                continue
+            raise InvalidReferenceError(f"Invalid reference '{original_reference}'.")
+
+    def __parse_verses(self, value: str) -> List[int]:
+        verses = []  # type: List[int]
+        seen = set()
+        for part in value.split(","):
+            part = part.strip()
+            if "-" in part:
+                start_text, end_text = (component.strip() for component in part.split("-", 1))
+                start = self.__validate_verse_number(start_text)
+                end = self.__validate_verse_number(end_text)
+                if start > end:
+                    raise InvalidReferenceError("Verse ranges must be in ascending order.")
+                range_size = end - start + 1
+                if range_size > self.__max_verses or len(verses) + range_size > self.__max_verses:
+                    raise InvalidReferenceError(
+                        f"A reference may select at most {self.__max_verses} verses."
+                    )
+                candidates = range(start, end + 1)
+            else:
+                candidates = (self.__validate_verse_number(part),)
+
+            for verse in candidates:
+                if verse not in seen:
+                    seen.add(verse)
+                    verses.append(verse)
+                    if len(verses) > self.__max_verses:
+                        raise InvalidReferenceError(
+                            f"A reference may select at most {self.__max_verses} verses."
+                        )
+
         if not verses:
-            return [1]
-        verse_parts = verses.split(',')
-        verse_list = []
-        for part in verse_parts:
-            if '-' in part:
-                range_parts = part.split('-')
-                if all(rp.isdigit() for rp in range_parts):
-                    start, end = sorted(map(int, range_parts))
-                    verse_list.extend(range(start, end + 1))
-                elif len(range_parts) == 2 and range_parts[0].isdigit() and not range_parts[1]:
-                    verse_list.append(int(range_parts[0]))
-                elif len(range_parts) == 2 and range_parts[1].isdigit() and not range_parts[0]:
-                    verse_list.append(int(range_parts[1]))
-            elif part.isdigit():
-                verse_list.append(int(part))
-        return verse_list if verse_list else [1]
+            raise InvalidReferenceError("A reference must select at least one verse.")
+        return verses
 
-    def __get_book_number(self, book_name: str, abbreviation: Optional[str]) -> Optional[int]:
-        """
-        Retrieve the book number given a book name and translation abbreviation.
-
-        :param book_name: Name of the book.
-        :param abbreviation: Translation abbreviation.
-        :return: Book number or None if not found.
-        """
-        return self.__get_book.number(book_name, abbreviation)
-
-    def __manage_local_cache(self, key: str, value: Optional[BookReference]):
-        """
-        Manage the insertion and eviction policy for the cache.
-
-        :param key: The key to insert into the cache.
-        :param value: The value to associate with the key.
-        """
-        if len(self.__cache) >= self.__cache_limit:
-            self.__cache.pop(next(iter(self.__cache)))  # Evict the oldest cache item
-        self.__cache[key] = value
+    def __validate_verse_number(self, value: str) -> int:
+        if not value.isdigit():
+            raise InvalidReferenceError("Verse numbers must be positive integers.")
+        verse = int(value)
+        if verse < 1 or verse > self.__max_verse:
+            raise InvalidReferenceError(f"Verse must be between 1 and {self.__max_verse}.")
+        return verse
