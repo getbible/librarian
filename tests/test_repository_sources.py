@@ -5,6 +5,7 @@ import unittest
 from functools import partial
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from unittest.mock import patch
 
 from getbible import GetBible, SearchBible
 
@@ -45,6 +46,8 @@ class TestRepositorySources(unittest.TestCase):
         )
 
     def tearDown(self) -> None:
+        self.local.close()
+        self.remote.close()
         self.temporary.cleanup()
 
     def test_local_path_and_remote_url_return_identical_scripture(self):
@@ -61,6 +64,15 @@ class TestRepositorySources(unittest.TestCase):
             "checked_at"
         ]
         self.assertEqual(local, remote)
+
+    def test_close_releases_remote_http_sessions(self):
+        self.assertTrue(self.remote.valid_translation("test"))
+        sessions = tuple(self.remote._repository._sessions)
+        self.assertEqual(len(sessions), 1)
+        with patch.object(sessions[0], "close", wraps=sessions[0].close) as close:
+            self.remote.close()
+        close.assert_called_once_with()
+        self.assertEqual(self.remote._repository._sessions, set())
 
 
 if __name__ == "__main__":

@@ -9,6 +9,7 @@ import os
 import tempfile
 import threading
 import time
+from collections import OrderedDict
 from contextlib import suppress
 from dataclasses import dataclass
 from pathlib import Path
@@ -16,6 +17,7 @@ from typing import Any
 
 from filelock import FileLock
 
+from ._keyed_locks import KeyedLockPool
 from .exceptions import (
     CacheIntegrityError,
     RepositoryError,
@@ -47,30 +49,53 @@ class TranslationCache:
         cache_dir: str | os.PathLike[str] | None = None,
         strict_freshness: bool = False,
         lock_timeout: float = 120.0,
+        memory_limit: int | None = 4,
+        refresh_jitter: float = 0.1,
     ) -> None:
         self.repository = repository
         self.refresh_seconds = max(0.0, refresh_seconds)
         self.cache_dir = self._cache_root(cache_dir)
         self.strict_freshness = strict_freshness
         self.lock_timeout = lock_timeout
-        self._memory: dict[str, TranslationSnapshot] = {}
-        self._locks: dict[str, threading.Lock] = {}
+        self.memory_limit = self._validated_limit("memory_limit", memory_limit)
+        if not isinstance(refresh_jitter, (int, float)) or isinstance(
+            refresh_jitter, bool
+        ):
+            raise TypeError("refresh_jitter must be a number.")
+        if not 0 <= refresh_jitter < 1:
+            raise ValueError("refresh_jitter must be between 0 (inclusive) and 1.")
+        self.refresh_jitter = float(refresh_jitter)
+        self._memory: OrderedDict[str, TranslationSnapshot] = OrderedDict()
+        self._locks = KeyedLockPool()
         self._guard = threading.RLock()
+        self._stats = {
+            "memory_hits": 0,
+            "disk_hits": 0,
+            "source_checks": 0,
+            "downloads": 0,
+            "stale_fallbacks": 0,
+            "evictions": 0,
+        }
 
     def load(self, abbreviation: str) -> TranslationSnapshot:
         """Return a fresh or last-known-good translation snapshot."""
         now = time.time()
         with self._guard:
             memory = self._memory.get(abbreviation)
-        if memory is not None and now - memory.checked_at < self.refresh_seconds:
+            if memory is not None:
+                self._memory.move_to_end(abbreviation)
+        if memory is not None and self._is_fresh(abbreviation, memory, now):
+            self._increment("memory_hits")
             return memory
 
-        lock = self._translation_lock(abbreviation)
-        with lock:
+        with self._locks.hold(abbreviation):
             now = time.time()
             with self._guard:
                 memory = self._memory.get(abbreviation)
-            if memory is not None and now - memory.checked_at < self.refresh_seconds:
+                if memory is not None:
+                    self._memory.move_to_end(abbreviation)
+            if memory is not None and self._is_fresh(abbreviation, memory, now):
+                self._increment("memory_hits")
                 return memory
 
             paths = self._paths(abbreviation)
@@ -90,10 +115,14 @@ class TranslationCache:
                     )
                 else:
                     disk = self._read_disk(paths, metadata)
-                if disk is not None and now - disk.checked_at < self.refresh_seconds:
+                if disk is None and memory is not None:
+                    disk = memory
+                if disk is not None and self._is_fresh(abbreviation, disk, now):
+                    self._increment("disk_hits")
                     return self._remember(abbreviation, disk)
 
                 try:
+                    self._increment("source_checks")
                     refreshed = self._refresh(abbreviation, paths, disk, now)
                 except RepositoryResourceNotFound:
                     if disk is None:
@@ -104,6 +133,7 @@ class TranslationCache:
                         "Serving stale translation %s because its source is unavailable.",
                         abbreviation,
                     )
+                    self._increment("stale_fallbacks")
                     refreshed = TranslationSnapshot(
                         disk.data, disk.sha, disk.checked_at, stale=True
                     )
@@ -115,6 +145,7 @@ class TranslationCache:
                         abbreviation,
                         exc_info=True,
                     )
+                    self._increment("stale_fallbacks")
                     refreshed = TranslationSnapshot(
                         disk.data, disk.sha, disk.checked_at, stale=True
                     )
@@ -127,6 +158,26 @@ class TranslationCache:
                 self._memory.clear()
             else:
                 self._memory.pop(abbreviation, None)
+
+    def cache_info(self) -> dict[str, Any]:
+        """Return a JSON-friendly snapshot of translation-cache state."""
+        with self._guard:
+            translations = {
+                code: {
+                    "sha": snapshot.sha,
+                    "checked_at": snapshot.checked_at,
+                    "stale": snapshot.stale,
+                }
+                for code, snapshot in self._memory.items()
+            }
+            stats = dict(self._stats)
+        return {
+            "size": len(translations),
+            "limit": self.memory_limit,
+            "active_locks": self._locks.size,
+            "translations": translations,
+            **stats,
+        }
 
     def _refresh(
         self,
@@ -150,6 +201,7 @@ class TranslationCache:
             return snapshot
 
         raw = self.repository.fetch_bytes(f"{abbreviation}.json")
+        self._increment("downloads")
         actual_sha = hashlib.sha1(raw).hexdigest()
         if remote_sha and actual_sha != remote_sha:
             raise CacheIntegrityError(
@@ -268,16 +320,54 @@ class TranslationCache:
             with suppress(FileNotFoundError):
                 os.unlink(temporary_name)
 
-    def _translation_lock(self, abbreviation: str) -> threading.Lock:
-        with self._guard:
-            return self._locks.setdefault(abbreviation, threading.Lock())
-
     def _remember(
         self, abbreviation: str, snapshot: TranslationSnapshot
     ) -> TranslationSnapshot:
         with self._guard:
+            if self.memory_limit == 0:
+                self._memory.pop(abbreviation, None)
+                return snapshot
             self._memory[abbreviation] = snapshot
+            self._memory.move_to_end(abbreviation)
+            while (
+                self.memory_limit is not None
+                and len(self._memory) > self.memory_limit
+            ):
+                self._memory.popitem(last=False)
+                self._stats["evictions"] += 1
         return snapshot
+
+    def _is_fresh(
+        self,
+        abbreviation: str,
+        snapshot: TranslationSnapshot,
+        now: float,
+    ) -> bool:
+        if self.refresh_seconds <= 0:
+            return False
+        key = f"{os.getpid()}:{abbreviation}:{snapshot.sha}".encode()
+        jitter_value = int.from_bytes(
+            hashlib.blake2b(key, digest_size=8).digest(),
+            "big",
+        ) / ((1 << 64) - 1)
+        refresh_window = self.refresh_seconds * (
+            1 - (self.refresh_jitter * jitter_value)
+        )
+        return now - snapshot.checked_at < refresh_window
+
+    def _increment(self, name: str) -> None:
+        with self._guard:
+            self._stats[name] += 1
+
+    @staticmethod
+    def _validated_limit(name: str, value: int | None) -> int | None:
+        if value is None:
+            return None
+        if not isinstance(value, int) or isinstance(value, bool):
+            raise TypeError(f"{name} must be an integer or null.")
+        if value < 0:
+            raise ValueError(f"{name} cannot be negative.")
+        return value
 
     @staticmethod
     def _valid_sha(value: object) -> bool:

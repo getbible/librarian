@@ -7,6 +7,7 @@ import unittest
 from concurrent.futures import ThreadPoolExecutor
 from datetime import timedelta
 from pathlib import Path
+from unittest.mock import patch
 
 from getbible import (
     CacheIntegrityError,
@@ -264,8 +265,14 @@ class TestTranslationCache(unittest.TestCase):
         first = bible.search("faith", "test")
         corpus = bible._search_corpora["test"]
         index = corpus.index(False, "sensitive")
-        second = bible.search("faith", "test")
+        with patch.object(
+            bible._translation_cache,
+            "_read_disk",
+            wraps=bible._translation_cache._read_disk,
+        ) as read_disk:
+            second = bible.search("faith", "test")
 
+        read_disk.assert_not_called()
         self.assertIs(bible._search_corpora["test"], corpus)
         self.assertIs(corpus.index(False, "sensitive"), index)
         self.assertEqual(first["query"]["sha"], second["query"]["sha"])

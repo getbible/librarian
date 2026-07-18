@@ -250,6 +250,25 @@ class TranslationCorpus:
         with self._state_lock:
             return self.checked_at, self.stale
 
+    def cache_info(self) -> dict[str, Any]:
+        """Return JSON-friendly corpus and normalized-index information."""
+        checked_at, stale = self.cache_state()
+        with self._variant_lock:
+            variants = [
+                {
+                    "case_sensitive": case_sensitive,
+                    "diacritics": diacritics,
+                }
+                for case_sensitive, diacritics in sorted(self._variants)
+            ]
+        return {
+            "sha": self.sha,
+            "checked_at": checked_at,
+            "stale": stale,
+            "verses": len(self.records),
+            "indexes": variants,
+        }
+
     def index(self, case_sensitive: bool, diacritics: str) -> SearchIndex:
         key = (case_sensitive, diacritics)
         index = self._variants.get(key)

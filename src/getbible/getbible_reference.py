@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import threading
 import unicodedata
 from collections import OrderedDict
 from dataclasses import dataclass
@@ -22,10 +23,20 @@ class GetBibleReference:
 
     _ALLOWED_PUNCTUATION = frozenset(" ,:-.'’")
 
-    def __init__(self, cache_limit: int = 5000) -> None:
+    def __init__(self, cache_limit: int | None = 5000) -> None:
+        if cache_limit is not None and (
+            not isinstance(cache_limit, int)
+            or isinstance(cache_limit, bool)
+            or cache_limit < 0
+        ):
+            raise ValueError("cache_limit must be a non-negative integer or null.")
         self.__get_book = GetBibleBookNumber()
         self.__cache: OrderedDict[tuple[str, str], BookReference | None] = OrderedDict()
         self.__cache_limit = cache_limit
+        self.__cache_guard = threading.Lock()
+        self.__cache_hits = 0
+        self.__cache_misses = 0
+        self.__cache_evictions = 0
 
     def ref(self, reference: str, translation_code: str | None = None) -> BookReference:
         """Return a parsed reference or raise :class:`ValueError`."""
@@ -34,12 +45,24 @@ class GetBibleReference:
             raise ValueError(f"Invalid reference '{reference}'.")
 
         key = ((translation_code or "").casefold(), normalized.casefold())
-        if key in self.__cache:
-            cached = self.__cache.pop(key)
-            self.__cache[key] = cached
-        else:
-            cached = self.__book_reference(reference, normalized, translation_code)
-            self.__manage_local_cache(key, cached)
+        with self.__cache_guard:
+            if key in self.__cache:
+                cached = self.__cache.pop(key)
+                self.__cache[key] = cached
+                self.__cache_hits += 1
+                found = True
+            else:
+                self.__cache_misses += 1
+                found = False
+        if not found:
+            resolved = self.__book_reference(reference, normalized, translation_code)
+            with self.__cache_guard:
+                if key in self.__cache:
+                    cached = self.__cache.pop(key)
+                    self.__cache[key] = cached
+                else:
+                    cached = resolved
+                    self.__manage_local_cache(key, cached)
 
         if cached is None:
             raise ValueError(f"Invalid reference '{reference}'.")
@@ -58,6 +81,17 @@ class GetBibleReference:
     ) -> int | None:
         """Resolve a book name or number using the configured alias tries."""
         return self.__get_book.number(reference, translation_code)
+
+    def cache_info(self) -> dict[str, int | None]:
+        """Return reference-cache size, limit, and counters."""
+        with self.__cache_guard:
+            return {
+                "size": len(self.__cache),
+                "limit": self.__cache_limit,
+                "hits": self.__cache_hits,
+                "misses": self.__cache_misses,
+                "evictions": self.__cache_evictions,
+            }
 
     def __sanitize(self, reference: str) -> str | None:
         if not isinstance(reference, str):
@@ -164,8 +198,12 @@ class GetBibleReference:
         key: tuple[str, str],
         value: BookReference | None,
     ) -> None:
-        if self.__cache_limit < 1:
+        if self.__cache_limit == 0:
             return
-        if len(self.__cache) >= self.__cache_limit:
+        if (
+            self.__cache_limit is not None
+            and len(self.__cache) >= self.__cache_limit
+        ):
             self.__cache.popitem(last=False)
+            self.__cache_evictions += 1
         self.__cache[key] = value

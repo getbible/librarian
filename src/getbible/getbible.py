@@ -8,10 +8,12 @@ import os
 import re
 import threading
 import time
+from collections import OrderedDict
 from dataclasses import dataclass
 from datetime import timedelta
 from typing import Any
 
+from ._keyed_locks import KeyedLockPool
 from .exceptions import CacheIntegrityError, RepositoryResourceNotFound
 from .getbible_reference import BookReference, GetBibleReference
 from .repository_client import RepositoryClient
@@ -24,6 +26,20 @@ class _CacheEntry:
     data: dict[str, Any]
     loaded_at: float
     sha: str | None = None
+
+
+@dataclass(slots=True)
+class _CacheStats:
+    hits: int = 0
+    misses: int = 0
+    evictions: int = 0
+
+    def to_dict(self) -> dict[str, int]:
+        return {
+            "hits": self.hits,
+            "misses": self.misses,
+            "evictions": self.evictions,
+        }
 
 
 class GetBible:
@@ -52,8 +68,29 @@ class GetBible:
         request_retries: int = 3,
         cache_dir: str | os.PathLike[str] | None = None,
         strict_freshness: bool = False,
+        reference_cache_limit: int | None = 5000,
+        books_cache_limit: int | None = 64,
+        chapter_cache_limit: int | None = 2048,
+        search_corpus_limit: int | None = 4,
+        translation_cache_limit: int | None = 4,
+        cache_ttl_jitter: float = 0.1,
     ) -> None:
-        self.__get = GetBibleReference()
+        reference_cache_limit = self._validated_cache_limit(
+            "reference_cache_limit", reference_cache_limit
+        )
+        self._books_cache_limit = self._validated_cache_limit(
+            "books_cache_limit", books_cache_limit
+        )
+        self._chapter_cache_limit = self._validated_cache_limit(
+            "chapter_cache_limit", chapter_cache_limit
+        )
+        self._search_corpus_limit = self._validated_cache_limit(
+            "search_corpus_limit", search_corpus_limit
+        )
+        translation_cache_limit = self._validated_cache_limit(
+            "translation_cache_limit", translation_cache_limit
+        )
+        self.__get = GetBibleReference(cache_limit=reference_cache_limit)
         self._repository = RepositoryClient(
             repo_path=repo_path,
             version=version,
@@ -61,17 +98,24 @@ class GetBible:
             retries=request_retries,
         )
         self._cache_ttl_seconds = max(0.0, cache_ttl.total_seconds())
-        self.__books_cache: dict[str, _CacheEntry] = {}
-        self.__chapters_cache: dict[str, _CacheEntry] = {}
+        self.__books_cache: OrderedDict[str, _CacheEntry] = OrderedDict()
+        self.__chapters_cache: OrderedDict[str, _CacheEntry] = OrderedDict()
         self._cache_guard = threading.RLock()
-        self._resource_locks: dict[str, threading.Lock] = {}
+        self._resource_locks = KeyedLockPool()
+        self._cache_stats = {
+            "books": _CacheStats(),
+            "chapters": _CacheStats(),
+            "search_corpora": _CacheStats(),
+        }
         self._translation_cache = TranslationCache(
             repository=self._repository,
             refresh_seconds=self._cache_ttl_seconds,
             cache_dir=cache_dir,
             strict_freshness=strict_freshness,
+            memory_limit=translation_cache_limit,
+            refresh_jitter=cache_ttl_jitter,
         )
-        self._search_corpora: dict[str, TranslationCorpus] = {}
+        self._search_corpora: OrderedDict[str, TranslationCorpus] = OrderedDict()
 
     def select(self, reference: str, abbreviation: str | None = 'kjv') -> dict[str, Any]:
         """Return Bible verses using the established grouped result contract."""
@@ -130,6 +174,70 @@ class GetBible:
             ensure_ascii=False,
         )
 
+    def warm_translation(
+        self,
+        abbreviation: str | None = "kjv",
+        *,
+        case_sensitive: bool = False,
+        diacritics: str = "sensitive",
+    ) -> dict[str, Any]:
+        """Load one translation corpus and normalized index before traffic.
+
+        This method performs no artificial query and returns operational metadata
+        only. Call it before a pre-fork server creates workers when copy-on-write
+        sharing is desired.
+        """
+        code = self._validated_translation_code(abbreviation)
+        criteria = SearchBible(
+            case_sensitive=case_sensitive,
+            diacritics=diacritics,
+            limit=1,
+        )
+        try:
+            corpus = self._search_corpus(code)
+        except RepositoryResourceNotFound as error:
+            raise FileNotFoundError(f"Translation ({code}) not found.") from error
+        corpus.index(criteria.case_sensitive, criteria.diacritics)
+        return {"abbreviation": code, **corpus.cache_info()}
+
+    def cache_info(self) -> dict[str, Any]:
+        """Return bounded-cache state and counters without exposing payloads."""
+        with self._cache_guard:
+            corpora = {
+                code: corpus.cache_info()
+                for code, corpus in self._search_corpora.items()
+            }
+            books = self._cache_summary(
+                len(self.__books_cache), self._books_cache_limit, "books"
+            )
+            chapters = self._cache_summary(
+                len(self.__chapters_cache), self._chapter_cache_limit, "chapters"
+            )
+            search_corpora = self._cache_summary(
+                len(self._search_corpora),
+                self._search_corpus_limit,
+                "search_corpora",
+            )
+        search_corpora["translations"] = corpora
+        return {
+            "references": self.__get.cache_info(),
+            "books": books,
+            "chapters": chapters,
+            "search_corpora": search_corpora,
+            "translation_cache": self._translation_cache.cache_info(),
+            "active_resource_locks": self._resource_locks.size,
+        }
+
+    def close(self) -> None:
+        """Close repository HTTP sessions during application shutdown."""
+        self._repository.close()
+
+    def __enter__(self) -> GetBible:
+        return self
+
+    def __exit__(self, *_: object) -> None:
+        self.close()
+
     def valid_reference(self, reference: str, abbreviation: str | None = 'kjv') -> bool:
         """Return whether ``reference`` is structurally resolvable."""
         return self.__get.valid(reference, abbreviation)
@@ -142,18 +250,28 @@ class GetBible:
             return False
 
         key = f"books:{code}"
-        lock = self._resource_lock(key)
-        with lock:
+        with self._resource_locks.hold(key):
             with self._cache_guard:
                 entry = self.__books_cache.get(code)
             if entry is not None and self._is_fresh(entry):
+                with self._cache_guard:
+                    self.__books_cache.move_to_end(code)
+                    self._cache_stats["books"].hits += 1
                 return True
+            with self._cache_guard:
+                self._cache_stats["books"].misses += 1
             try:
                 books = self._repository.fetch_json(f"{code}/books.json")
             except RepositoryResourceNotFound:
                 return False
             with self._cache_guard:
-                self.__books_cache[code] = _CacheEntry(books, time.monotonic())
+                self._put_bounded(
+                    self.__books_cache,
+                    code,
+                    _CacheEntry(books, time.monotonic()),
+                    self._books_cache_limit,
+                    "books",
+                )
             return True
 
     def valid_limit(self, limit: str) -> bool:
@@ -179,10 +297,6 @@ class GetBible:
             raise ValueError(f"Invalid translation abbreviation '{abbreviation}'.")
         return code
 
-    def _resource_lock(self, key: str) -> threading.Lock:
-        with self._cache_guard:
-            return self._resource_locks.setdefault(key, threading.Lock())
-
     def _is_fresh(self, entry: _CacheEntry) -> bool:
         return time.monotonic() - entry.loaded_at < self._cache_ttl_seconds
 
@@ -192,18 +306,30 @@ class GetBible:
             corpus = self._search_corpora.get(abbreviation)
         if corpus is not None and corpus.sha == snapshot.sha:
             corpus.refresh_state(snapshot)
+            with self._cache_guard:
+                self._search_corpora.move_to_end(abbreviation)
+                self._cache_stats["search_corpora"].hits += 1
             return corpus
 
-        lock = self._resource_lock(f"translation:{abbreviation}")
-        with lock:
+        with self._resource_locks.hold(f"translation:{abbreviation}"):
             with self._cache_guard:
                 corpus = self._search_corpora.get(abbreviation)
             if corpus is not None and corpus.sha == snapshot.sha:
                 corpus.refresh_state(snapshot)
+                with self._cache_guard:
+                    self._search_corpora.move_to_end(abbreviation)
+                    self._cache_stats["search_corpora"].hits += 1
                 return corpus
             corpus = TranslationCorpus(snapshot)
             with self._cache_guard:
-                self._search_corpora[abbreviation] = corpus
+                self._cache_stats["search_corpora"].misses += 1
+                self._put_bounded(
+                    self._search_corpora,
+                    abbreviation,
+                    corpus,
+                    self._search_corpus_limit,
+                    "search_corpora",
+                )
             return corpus
 
     @staticmethod
@@ -301,12 +427,17 @@ class GetBible:
 
     def _chapter(self, abbreviation: str, book: int, chapter: int) -> dict[str, Any]:
         cache_key = f"{abbreviation}_{book}_{chapter}"
-        lock = self._resource_lock(f"chapter:{cache_key}")
-        with lock:
+        with self._resource_locks.hold(f"chapter:{cache_key}"):
             with self._cache_guard:
                 entry = self.__chapters_cache.get(cache_key)
             if entry is not None and self._is_fresh(entry):
+                with self._cache_guard:
+                    self.__chapters_cache.move_to_end(cache_key)
+                    self._cache_stats["chapters"].hits += 1
                 return entry.data
+
+            with self._cache_guard:
+                self._cache_stats["chapters"].misses += 1
 
             if entry is not None and entry.sha:
                 try:
@@ -317,6 +448,8 @@ class GetBible:
                     remote_sha = ""
                 if remote_sha and remote_sha == entry.sha:
                     entry.loaded_at = time.monotonic()
+                    with self._cache_guard:
+                        self.__chapters_cache.move_to_end(cache_key)
                     return entry.data
 
             relative_path = f"{abbreviation}/{book}/{chapter}.json"
@@ -348,9 +481,54 @@ class GetBible:
                 sha=hashlib.sha1(raw).hexdigest(),
             )
             with self._cache_guard:
-                self.__chapters_cache[cache_key] = loaded
+                self._put_bounded(
+                    self.__chapters_cache,
+                    cache_key,
+                    loaded,
+                    self._chapter_cache_limit,
+                    "chapters",
+                )
             return chapter_data
 
     def __check_translation(self, abbreviation: str) -> None:
         if not self.valid_translation(abbreviation):
             raise FileNotFoundError(f"Translation ({abbreviation}) not found.")
+
+    def _put_bounded(
+        self,
+        cache: OrderedDict[str, Any],
+        key: str,
+        value: Any,
+        limit: int | None,
+        category: str,
+    ) -> None:
+        if limit == 0:
+            cache.pop(key, None)
+            return
+        cache[key] = value
+        cache.move_to_end(key)
+        while limit is not None and len(cache) > limit:
+            cache.popitem(last=False)
+            self._cache_stats[category].evictions += 1
+
+    def _cache_summary(
+        self,
+        size: int,
+        limit: int | None,
+        category: str,
+    ) -> dict[str, Any]:
+        return {
+            "size": size,
+            "limit": limit,
+            **self._cache_stats[category].to_dict(),
+        }
+
+    @staticmethod
+    def _validated_cache_limit(name: str, value: int | None) -> int | None:
+        if value is None:
+            return None
+        if not isinstance(value, int) or isinstance(value, bool):
+            raise TypeError(f"{name} must be an integer or null.")
+        if value < 0:
+            raise ValueError(f"{name} cannot be negative.")
+        return value
