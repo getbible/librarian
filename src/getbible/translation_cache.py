@@ -76,7 +76,20 @@ class TranslationCache:
             paths = self._paths(abbreviation)
             paths["directory"].mkdir(parents=True, exist_ok=True)
             with FileLock(str(paths["lock"]), timeout=self.lock_timeout):
-                disk = self._read_disk(paths)
+                metadata = self._read_metadata(paths)
+                disk = None
+                if (
+                    memory is not None
+                    and metadata is not None
+                    and metadata[0] == memory.sha
+                ):
+                    disk = TranslationSnapshot(
+                        memory.data,
+                        memory.sha,
+                        metadata[1],
+                    )
+                else:
+                    disk = self._read_disk(paths, metadata)
                 if disk is not None and now - disk.checked_at < self.refresh_seconds:
                     return self._remember(abbreviation, disk)
 
@@ -150,17 +163,33 @@ class TranslationCache:
         self._write_metadata(paths["metadata"], snapshot)
         return snapshot
 
-    def _read_disk(self, paths: dict[str, Path]) -> TranslationSnapshot | None:
+    def _read_metadata(self, paths: dict[str, Path]) -> tuple[str, float] | None:
         try:
-            raw = paths["translation"].read_bytes()
             metadata = json.loads(paths["metadata"].read_text(encoding="utf-8"))
             expected_sha = metadata["sha"]
             checked_at = float(metadata["checked_at"])
         except (FileNotFoundError, OSError, KeyError, TypeError, ValueError, json.JSONDecodeError):
             return None
+        if not self._valid_sha(expected_sha):
+            return None
+        return expected_sha, checked_at
+
+    def _read_disk(
+        self,
+        paths: dict[str, Path],
+        metadata: tuple[str, float] | None = None,
+    ) -> TranslationSnapshot | None:
+        metadata = metadata or self._read_metadata(paths)
+        if metadata is None:
+            return None
+        expected_sha, checked_at = metadata
+        try:
+            raw = paths["translation"].read_bytes()
+        except OSError:
+            return None
 
         actual_sha = hashlib.sha1(raw).hexdigest()
-        if not self._valid_sha(expected_sha) or actual_sha != expected_sha:
+        if actual_sha != expected_sha:
             LOGGER.warning("Ignoring a corrupt Librarian translation cache entry.")
             return None
         try:

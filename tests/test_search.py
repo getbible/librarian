@@ -1,3 +1,4 @@
+import hashlib
 import json
 import shutil
 import tempfile
@@ -246,6 +247,32 @@ class TestTranslationCache(unittest.TestCase):
         )
         with self.assertRaises(CacheIntegrityError):
             bible.search("faith", "test")
+
+    def test_unchanged_sha_preserves_corpus_and_built_index(self):
+        translation = self.repository / "v2" / "test.json"
+        published_sha = hashlib.sha1(translation.read_bytes()).hexdigest()
+        (self.repository / "v2" / "test.sha").write_text(
+            published_sha,
+            encoding="utf-8",
+        )
+        bible = GetBible(
+            repo_path=str(self.repository),
+            cache_dir=str(self.root / "cache"),
+            cache_ttl=timedelta(seconds=0),
+        )
+
+        first = bible.search("faith", "test")
+        corpus = bible._search_corpora["test"]
+        index = corpus.index(False, "sensitive")
+        second = bible.search("faith", "test")
+
+        self.assertIs(bible._search_corpora["test"], corpus)
+        self.assertIs(corpus.index(False, "sensitive"), index)
+        self.assertEqual(first["query"]["sha"], second["query"]["sha"])
+        self.assertGreaterEqual(
+            second["query"]["cache"]["checked_at"],
+            first["query"]["cache"]["checked_at"],
+        )
 
 
 if __name__ == "__main__":

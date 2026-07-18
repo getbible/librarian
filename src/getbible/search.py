@@ -234,6 +234,21 @@ class TranslationCorpus:
         self.book_names = self._build_book_names(self.records)
         self._variants: dict[tuple[bool, str], SearchIndex] = {}
         self._variant_lock = threading.Lock()
+        self._state_lock = threading.Lock()
+
+    def refresh_state(self, snapshot: TranslationSnapshot) -> None:
+        """Adopt freshness metadata without rebuilding unchanged verse indexes."""
+        if snapshot.sha != self.sha:
+            raise ValueError("Cannot refresh a corpus from a different translation SHA.")
+        with self._state_lock:
+            if snapshot.checked_at >= self.checked_at:
+                self.checked_at = snapshot.checked_at
+                self.stale = snapshot.stale
+
+    def cache_state(self) -> tuple[float, bool]:
+        """Return one consistent cache-state snapshot."""
+        with self._state_lock:
+            return self.checked_at, self.stale
 
     def index(self, case_sensitive: bool, diacritics: str) -> SearchIndex:
         key = (case_sensitive, diacritics)

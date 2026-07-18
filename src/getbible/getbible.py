@@ -190,24 +190,16 @@ class GetBible:
         snapshot = self._translation_cache.load(abbreviation)
         with self._cache_guard:
             corpus = self._search_corpora.get(abbreviation)
-        if (
-            corpus is not None
-            and corpus.sha == snapshot.sha
-            and corpus.stale == snapshot.stale
-            and corpus.checked_at == snapshot.checked_at
-        ):
+        if corpus is not None and corpus.sha == snapshot.sha:
+            corpus.refresh_state(snapshot)
             return corpus
 
         lock = self._resource_lock(f"translation:{abbreviation}")
         with lock:
             with self._cache_guard:
                 corpus = self._search_corpora.get(abbreviation)
-            if (
-                corpus is not None
-                and corpus.sha == snapshot.sha
-                and corpus.stale == snapshot.stale
-                and corpus.checked_at == snapshot.checked_at
-            ):
+            if corpus is not None and corpus.sha == snapshot.sha:
+                corpus.refresh_state(snapshot)
                 return corpus
             corpus = TranslationCorpus(snapshot)
             with self._cache_guard:
@@ -255,6 +247,7 @@ class GetBible:
             )
 
         returned = len(hits)
+        checked_at, stale = corpus.cache_state()
         return {
             "query": {
                 "text": query,
@@ -267,8 +260,8 @@ class GetBible:
                 "returned": returned,
                 "has_more": criteria.offset + returned < total,
                 "cache": {
-                    "checked_at": corpus.checked_at,
-                    "stale": corpus.stale,
+                    "checked_at": checked_at,
+                    "stale": stale,
                 },
             },
             "results": results,
