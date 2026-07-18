@@ -478,7 +478,7 @@ class GetBible:
             loaded = _CacheEntry(
                 data=chapter_data,
                 loaded_at=time.monotonic(),
-                sha=hashlib.sha1(raw).hexdigest(),
+                sha=hashlib.sha1(raw, usedforsecurity=False).hexdigest(),
             )
             with self._cache_guard:
                 self._put_bounded(

@@ -202,7 +202,7 @@ class TranslationCache:
 
         raw = self.repository.fetch_bytes(f"{abbreviation}.json")
         self._increment("downloads")
-        actual_sha = hashlib.sha1(raw).hexdigest()
+        actual_sha = hashlib.sha1(raw, usedforsecurity=False).hexdigest()
         if remote_sha and actual_sha != remote_sha:
             raise CacheIntegrityError(
                 f"Checksum mismatch for translation {abbreviation}: "
@@ -240,7 +240,7 @@ class TranslationCache:
         except OSError:
             return None
 
-        actual_sha = hashlib.sha1(raw).hexdigest()
+        actual_sha = hashlib.sha1(raw, usedforsecurity=False).hexdigest()
         if actual_sha != expected_sha:
             LOGGER.warning("Ignoring a corrupt Librarian translation cache entry.")
             return None
