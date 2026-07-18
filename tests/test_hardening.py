@@ -16,7 +16,6 @@ from getbible import (
 )
 from getbible.repository_client import RepositoryClient
 
-
 FIXTURE_REPOSITORY = Path(__file__).parent / "fixtures" / "repository"
 
 
@@ -30,9 +29,11 @@ class TestReferenceHardening(unittest.TestCase):
 
     def test_reversed_and_malformed_ranges_are_rejected(self) -> None:
         for reference in ("John 1:10-1", "John 1:16!", "John 1:1--2", "John 1:0"):
-            with self.subTest(reference=reference):
-                with self.assertRaises(ReferenceValidationError):
-                    self.references.ref(reference, "kjv")
+            with (
+                self.subTest(reference=reference),
+                self.assertRaises(ReferenceValidationError),
+            ):
+                self.references.ref(reference, "kjv")
 
     def test_legacy_open_range_forms_remain_compatible(self) -> None:
         self.assertEqual(self.references.ref("John 1:2-", "kjv").verses, [2])
@@ -116,9 +117,8 @@ class TestRepositoryBoundaries(unittest.TestCase):
     def test_repository_paths_cannot_escape_the_root(self) -> None:
         client = RepositoryClient("/tmp/repository")
         for path in ("../secret", "/etc/passwd", "test/../../secret"):
-            with self.subTest(path=path):
-                with self.assertRaises(ValueError):
-                    client.location(path)
+            with self.subTest(path=path), self.assertRaises(ValueError):
+                client.location(path)
 
     def test_timeout_and_retry_arguments_are_bounded(self) -> None:
         with self.assertRaises(ValueError):
