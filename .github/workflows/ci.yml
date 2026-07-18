@@ -10,6 +10,10 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   test:
     name: Python ${{ matrix.python-version }}
@@ -22,10 +26,10 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@42375524e23c412d93fb67b49958b491fce71c38 # v5.4.0
         with:
           python-version: ${{ matrix.python-version }}
           cache: pip
@@ -39,6 +43,9 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install -e .
 
+      - name: Compile source
+        run: python -m compileall -q src tests
+
       - name: Run deterministic tests
         run: python -m unittest discover -s tests -v
 
@@ -49,10 +56,10 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@42375524e23c412d93fb67b49958b491fce71c38 # v5.4.0
         with:
           python-version: "3.12"
           cache: pip
@@ -68,6 +75,12 @@ jobs:
       - name: Lint
         run: ruff check src tests benchmarks scripts examples
 
+      - name: Static security scan
+        run: bandit -q -r src/getbible -x src/getbible/data
+
+      - name: Dependency vulnerability scan
+        run: python -m pip_audit
+
       - name: Build distributions
         run: python -m build
 
@@ -79,10 +92,10 @@ jobs:
           python -m venv "${RUNNER_TEMP}/getbible-wheel"
           "${RUNNER_TEMP}/getbible-wheel/bin/python" -m pip install dist/*.whl
           cd "${RUNNER_TEMP}"
-          "${RUNNER_TEMP}/getbible-wheel/bin/python" -c "from getbible import GetBible, SearchBible; assert SearchBible().limit == 100; GetBible()"
+          "${RUNNER_TEMP}/getbible-wheel/bin/python" -c "from getbible import GetBible, RequestLimits, SearchBible; assert SearchBible().limit == 100; assert RequestLimits().max_references == 8; GetBible().close()"
 
       - name: Upload distributions
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08 # v4.6.0
         with:
           name: getbible-distributions
           path: dist/*
