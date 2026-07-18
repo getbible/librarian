@@ -1,247 +1,337 @@
-import os
-import re
+"""Bounded and failure-aware access to the GetBible Scripture repository."""
+
+from collections import OrderedDict
 import json
-import requests
+import os
+from pathlib import Path
+import re
 import threading
 import time
-from datetime import datetime, timedelta
-from typing import Dict, Optional, Union
-from getbible import GetBibleReference
-from getbible import BookReference
+from typing import Any, Dict, Optional, Tuple, Union
+
+import requests
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
+
+from getbible.errors import (
+    DataValidationError,
+    InvalidReferenceError,
+    ScriptureNotFoundError,
+    TranslationNotFoundError,
+    UpstreamUnavailableError,
+)
+from getbible.getbible_reference import BookReference, GetBibleReference
+
+
+_MISSING = object()
+
+
+class _TtlLruCache:
+    """Small thread-safe TTL/LRU cache with a hard entry limit."""
+
+    def __init__(self, max_size: int, ttl_seconds: float) -> None:
+        if max_size < 1 or ttl_seconds <= 0:
+            raise ValueError("Cache size and TTL must be positive.")
+        self._max_size = max_size
+        self._ttl_seconds = ttl_seconds
+        self._values = OrderedDict()
+        self._lock = threading.RLock()
+
+    def get(self, key: str) -> Any:
+        now = time.monotonic()
+        with self._lock:
+            item = self._values.get(key, _MISSING)
+            if item is _MISSING:
+                return _MISSING
+            created_at, value = item
+            if now - created_at >= self._ttl_seconds:
+                self._values.pop(key, None)
+                return _MISSING
+            self._values.move_to_end(key)
+            return value
+
+    def set(self, key: str, value: Any) -> None:
+        with self._lock:
+            self._values[key] = (time.monotonic(), value)
+            self._values.move_to_end(key)
+            while len(self._values) > self._max_size:
+                self._values.popitem(last=False)
+
+    def clear(self) -> None:
+        with self._lock:
+            self._values.clear()
 
 
 class GetBible:
-    WORD_OPTIONS = {'allwords', 'anywords', 'exactwords'}
-    MATCH_OPTIONS = {'exactmatch', 'partialmatch'}
-    CASE_OPTIONS = {'caseinsensitive', 'casesensitive'}
-    TARGET_OPTIONS = {'allbooks', 'oldtestament', 'newtestament'} | set(map(str, range(1, 81)))
+    WORD_OPTIONS = {"allwords", "anywords", "exactwords"}
+    MATCH_OPTIONS = {"exactmatch", "partialmatch"}
+    CASE_OPTIONS = {"caseinsensitive", "casesensitive"}
+    TARGET_OPTIONS = {"allbooks", "oldtestament", "newtestament"} | set(
+        map(str, range(1, 84))
+    )
 
-    def __init__(self, repo_path: str = "https://api.getbible.net", version: str = 'v2') -> None:
-        """
-        Initialize the GetBible class.
+    _TRANSLATION_PATTERN = re.compile(r"[a-z0-9]{1,30}")
 
-        Sets up the class by initializing the cache, starting the background thread for
-        monthly cache reset, and other necessary setups.
+    def __init__(
+        self,
+        repo_path: str = "https://api.getbible.net",
+        version: str = "v2",
+        connect_timeout: float = 3.05,
+        read_timeout: float = 10.0,
+        retries: int = 2,
+        cache_size: int = 512,
+        cache_ttl_seconds: float = 3600.0,
+        negative_cache_ttl_seconds: float = 300.0,
+        max_references: int = 8,
+        max_total_verses: int = 200,
+        session: Optional[requests.Session] = None,
+        reference_parser: Optional[GetBibleReference] = None,
+    ) -> None:
+        if not isinstance(repo_path, str) or not repo_path.strip():
+            raise ValueError("repo_path must be a non-empty URL or filesystem path.")
+        if not isinstance(version, str) or not version.strip():
+            raise ValueError("version must be non-empty.")
+        if connect_timeout <= 0 or read_timeout <= 0:
+            raise ValueError("HTTP timeouts must be positive.")
+        if retries < 0 or max_references < 1 or max_total_verses < 1:
+            raise ValueError("Retry and request limits are invalid.")
 
-        :param repo_path: The repository path, which can be a URL or a local file path.
-        :param version: The version of the Bible repository.
-        """
-        self.__get = GetBibleReference()
-        self.__repo_path = repo_path
-        self.__repo_version = version
-        self.__books_cache = {}
-        self.__chapters_cache = {}
-        self.__start_cache_reset_thread()
-        # Pattern to check valid translations names
-        self.__pattern = re.compile(r'[a-zA-Z0-9]{1,30}')
-        # Determine if the repository path is a URL
-        self.__repo_path_url = self.__repo_path.startswith("http://") or self.__repo_path.startswith("https://")
+        self.__repo_path = repo_path.rstrip("/")
+        self.__repo_version = version.strip("/")
+        self.__repo_path_url = self.__repo_path.startswith(("http://", "https://"))
+        self.__timeout = (connect_timeout, read_timeout)  # type: Tuple[float, float]
+        self.__max_references = max_references
+        self.__max_total_verses = max_total_verses
+        self.__get = reference_parser or GetBibleReference(max_verses=max_total_verses)
+        self.__books_cache = _TtlLruCache(cache_size, cache_ttl_seconds)
+        self.__negative_books_cache = _TtlLruCache(cache_size, negative_cache_ttl_seconds)
+        self.__chapters_cache = _TtlLruCache(cache_size, cache_ttl_seconds)
+        self.__owns_session = session is None
+        self.__session = session or requests.Session()
 
-    def select(self, reference: str, abbreviation: Optional[str] = 'kjv') -> Dict[str, Union[Dict, str]]:
-        """
-        Select and return Bible verses based on the reference and abbreviation.
+        if self.__owns_session:
+            retry = Retry(
+                total=retries,
+                connect=retries,
+                read=retries,
+                status=retries,
+                backoff_factor=0.25,
+                status_forcelist=(429, 500, 502, 503, 504),
+                allowed_methods=frozenset({"GET"}),
+                respect_retry_after_header=True,
+                raise_on_status=False,
+            )
+            adapter = HTTPAdapter(
+                max_retries=retry,
+                pool_connections=min(cache_size, 32),
+                pool_maxsize=min(cache_size, 32),
+            )
+            self.__session.mount("https://", adapter)
+            self.__session.mount("http://", adapter)
+        self.__session.headers.setdefault("User-Agent", "getbible-librarian/1.2")
 
-        :param reference: The Bible reference (e.g., John 3:16).
-        :param abbreviation: The abbreviation for the Bible translation.
-        :return: dictionary of the selected Bible verses.
-        """
-        self.__check_translation(abbreviation)
-        result = {}
-        references = reference.split(';')
-        for ref in references:
-            try:
-                book_reference = self.__get.ref(ref, abbreviation)
-            except ValueError:
-                raise ValueError(f"Invalid reference '{ref}'.")
+    @property
+    def available_translations(self) -> frozenset:
+        """Translation codes known locally; reading this property performs no network I/O."""
+        return self.__get.available_translations
 
-            self.__set_verse(abbreviation, book_reference, result)
+    def select(
+        self, reference: str, abbreviation: Optional[str] = "kjv"
+    ) -> Dict[str, Union[Dict, str]]:
+        """Select Scripture while enforcing reference and total-work budgets."""
+        if not isinstance(reference, str):
+            raise InvalidReferenceError("Reference must be text.")
 
+        normalized_abbreviation = (abbreviation or "kjv").strip().casefold()
+        references = [item.strip() for item in reference.split(";")]
+        if not references or any(not item for item in references):
+            raise InvalidReferenceError("Every reference must be non-empty.")
+        if len(references) > self.__max_references:
+            raise InvalidReferenceError(
+                f"A request may contain at most {self.__max_references} references."
+            )
+
+        parsed_references = []
+        total_verses = 0
+        for raw_reference in references:
+            parsed = self.__get.ref(raw_reference, normalized_abbreviation)
+            total_verses += len(parsed.verses)
+            if total_verses > self.__max_total_verses:
+                raise InvalidReferenceError(
+                    f"A request may select at most {self.__max_total_verses} verses."
+                )
+            parsed_references.append(parsed)
+
+        self.__check_translation(normalized_abbreviation)
+        result = {}  # type: Dict[str, Union[Dict, str]]
+        for parsed in parsed_references:
+            self.__set_verse(normalized_abbreviation, parsed, result)
         return result
 
-    def scripture(self, reference: str, abbreviation: Optional[str] = 'kjv') -> str:
-        """
-        Select and return Bible verses based on the reference and abbreviation.
+    def scripture(self, reference: str, abbreviation: Optional[str] = "kjv") -> str:
+        return json.dumps(self.select(reference, abbreviation), ensure_ascii=False)
 
-        :param reference: The Bible reference (e.g., John 3:16).
-        :param abbreviation: The abbreviation for the Bible translation.
-        :return: JSON string of the selected Bible verses.
-        """
-
-        return json.dumps(self.select(reference, abbreviation))
-
-    def valid_reference(self, reference: str, abbreviation: Optional[str] = 'kjv') -> bool:
-        """
-        Validate a scripture reference and check its presence in the cache.
-
-        :param reference: Scripture reference string.
-        :param abbreviation: Optional translation code.
-        :return: True if valid and present, False otherwise.
-        """
+    def valid_reference(self, reference: str, abbreviation: Optional[str] = "kjv") -> bool:
         return self.__get.valid(reference, abbreviation)
 
     def valid_translation(self, abbreviation: str) -> bool:
-        """
-        Check if the given translation is valid.
+        """Validate only locally known codes, then confirm the configured repository has them."""
+        if not isinstance(abbreviation, str):
+            return False
+        normalized = abbreviation.strip().casefold()
+        if not self._TRANSLATION_PATTERN.fullmatch(normalized):
+            return False
+        if normalized not in self.available_translations:
+            return False
 
-        :param abbreviation: The abbreviation of the Bible translation to check.
-        :return: True if the translation is available, False otherwise.
-        """
-        if self.__pattern.match(abbreviation):
-            path = self.__generate_path(abbreviation, "books.json")
-            # Check if the translation is already in the cache
-            if abbreviation not in self.__books_cache:
-                self.__books_cache[abbreviation] = self.__fetch_data(path)
-            # Return True if the translation is available, False otherwise
-            return self.__books_cache[abbreviation] is not None
-        return False
+        negative = self.__negative_books_cache.get(normalized)
+        if negative is not _MISSING:
+            return False
+        cached = self.__books_cache.get(normalized)
+        if cached is not _MISSING:
+            return True
+
+        path = self.__generate_path(normalized, "books.json")
+        books = self.__fetch_data(path)
+        if books is None:
+            self.__negative_books_cache.set(normalized, True)
+            return False
+        self.__books_cache.set(normalized, books)
+        return True
 
     def valid_limit(self, limit: str) -> bool:
-        """
-        Check if the given limit string is valid.
-
-        :param limit: The limit string to check.
-        :return: True if the limit is valid, False otherwise.
-        """
-        parts = limit.split('-')
+        parts = limit.split("-")
         if len(parts) != 4:
             return False
         words, match, case, target = parts
-        return (words in self.WORD_OPTIONS and
-                match in self.MATCH_OPTIONS and
-                case in self.CASE_OPTIONS and
-                target in self.TARGET_OPTIONS)
+        return (
+            words in self.WORD_OPTIONS
+            and match in self.MATCH_OPTIONS
+            and case in self.CASE_OPTIONS
+            and target in self.TARGET_OPTIONS
+        )
 
-    def __start_cache_reset_thread(self) -> None:
-        """
-        Start a background thread to reset the cache monthly.
+    def close(self) -> None:
+        if self.__owns_session:
+            self.__session.close()
 
-        This method creates and starts a daemon thread that runs the cache reset function
-        every month.
-        """
-        reset_thread = threading.Thread(target=self.__reset_cache_monthly)
-        reset_thread.daemon = True  # Daemonize thread
-        reset_thread.start()
+    def __enter__(self) -> "GetBible":
+        return self
 
-    def __reset_cache_monthly(self) -> None:
-        """
-        Periodically clears the cache on the first day of each month.
+    def __exit__(self, exc_type: Any, exc_value: Any, traceback: Any) -> None:
+        self.close()
 
-        This method runs in a background thread and calculates the time until the start
-        of the next month. It sleeps until that time and then clears the cache.
-        """
-        while True:
-            time_to_sleep = self.__calculate_time_until_next_month()
-            time.sleep(time_to_sleep)
-            self.__chapters_cache.clear()
-            print(f"Cache cleared on {datetime.now()}")
-
-    def __calculate_time_until_next_month(self) -> float:
-        """
-        Calculate the seconds until the start of the next month.
-
-        Determines how many seconds are left until the first day of the next month
-        from the current time. This duration is used by the cache reset thread to
-        sleep until the cache needs to be cleared.
-
-        :return: Number of seconds until the start of the next month.
-        """
-        now = datetime.now()
-        # Calculate the first day of the next month
-        first_of_next_month = (now.replace(day=1) + timedelta(days=32)).replace(day=1)
-        return (first_of_next_month - now).total_seconds()
-
-    def __set_verse(self, abbreviation: str, book_ref: BookReference, result: Dict) -> None:
-        """
-        Set verse information into the result JSON.
-        :param abbreviation: Bible translation abbreviation.
-        :param book_ref: The book reference class.
-        :param result: The dictionary to store verse information.
-        """
+    def __set_verse(
+        self,
+        abbreviation: str,
+        book_ref: BookReference,
+        result: Dict[str, Union[Dict, str]],
+    ) -> None:
         cache_key = f"{abbreviation}_{book_ref.book}_{book_ref.chapter}"
-        if cache_key not in self.__chapters_cache:
-            chapter_data = self.__retrieve_chapter_data(abbreviation, book_ref.book, book_ref.chapter)
-            # Convert verses list to dictionary for faster lookup
-            verse_dict = {str(v["verse"]): v for v in chapter_data.get("verses", [])}
-            chapter_data["verses"] = verse_dict
-            self.__chapters_cache[cache_key] = chapter_data
-        else:
-            chapter_data = self.__chapters_cache[cache_key]
+        chapter_data = self.__chapters_cache.get(cache_key)
+        if chapter_data is _MISSING:
+            fetched = self.__retrieve_chapter_data(
+                abbreviation, book_ref.book, book_ref.chapter
+            )
+            chapter_data = self.__normalize_chapter_data(fetched)
+            self.__chapters_cache.set(cache_key, chapter_data)
 
+        verse_map = chapter_data["verses"]
         for verse in book_ref.verses:
-            verse_info = chapter_data["verses"].get(str(verse))
+            verse_info = verse_map.get(str(verse))
             if not verse_info:
-                raise ValueError(f"Verse {verse} not found in book {book_ref.book}, chapter {book_ref.chapter}.")
+                raise ScriptureNotFoundError(
+                    f"Verse {verse} not found in book {book_ref.book}, chapter {book_ref.chapter}."
+                )
 
-            if cache_key in result:
-                existing_verses = {str(v["verse"]) for v in result[cache_key].get("verses", [])}
+            existing = result.get(cache_key)
+            if isinstance(existing, dict):
+                existing_verses = {str(item.get("verse")) for item in existing.get("verses", [])}
                 if str(verse) not in existing_verses:
-                    result[cache_key]["verses"].append(verse_info)
-                existing_ref = result[cache_key].get("ref", [])
-                if str(book_ref.reference) not in existing_ref:
-                    result[cache_key]["ref"].append(book_ref.reference)
+                    existing["verses"].append(verse_info)
+                if book_ref.reference not in existing.get("ref", []):
+                    existing["ref"].append(book_ref.reference)
             else:
-                # Include all other relevant elements of your JSON structure
-                result[cache_key] = {key: chapter_data[key] for key in chapter_data if key != "verses"}
-                result[cache_key]["ref"] = [book_ref.reference]
-                result[cache_key]["verses"] = [verse_info]
+                selected = {key: value for key, value in chapter_data.items() if key != "verses"}
+                selected["ref"] = [book_ref.reference]
+                selected["verses"] = [verse_info]
+                result[cache_key] = selected
+
+    def __normalize_chapter_data(self, chapter_data: Any) -> Dict[str, Any]:
+        if not isinstance(chapter_data, dict):
+            raise DataValidationError("Chapter data must be a JSON object.")
+        verses = chapter_data.get("verses")
+        if not isinstance(verses, list):
+            raise DataValidationError("Chapter data is missing its verse list.")
+
+        verse_map = {}
+        for verse in verses:
+            if not isinstance(verse, dict) or "verse" not in verse:
+                raise DataValidationError("Chapter data contains an invalid verse entry.")
+            verse_number = verse["verse"]
+            if not isinstance(verse_number, int) or verse_number < 1:
+                raise DataValidationError("Chapter data contains an invalid verse number.")
+            verse_map[str(verse_number)] = verse
+
+        normalized = dict(chapter_data)
+        normalized["verses"] = verse_map
+        return normalized
 
     def __check_translation(self, abbreviation: str) -> None:
-        """
-        Check if the given translation is available and raises an exception if not found.
-
-        :param abbreviation: The abbreviation of the Bible translation to check.
-        :raises FileNotFoundError: If the translation is not found.
-        """
-        # Use valid_translation to check if the translation is available
         if not self.valid_translation(abbreviation):
-            raise FileNotFoundError(f"Translation ({abbreviation}) not found.")
+            raise TranslationNotFoundError(f"Translation ({abbreviation}) not found.")
 
     def __generate_path(self, abbreviation: str, file_name: str) -> str:
-        """
-        Generate the path or URL for a given file.
-
-        :param abbreviation: Bible translation abbreviation.
-        :param file_name: Name of the file to fetch.
-        :return: Full path or URL to the file.
-        """
         if self.__repo_path_url:
             return f"{self.__repo_path}/{self.__repo_version}/{abbreviation}/{file_name}"
-        else:
-            return os.path.join(self.__repo_path, self.__repo_version, abbreviation, file_name)
+        return os.path.join(self.__repo_path, self.__repo_version, abbreviation, file_name)
 
-    def __fetch_data(self, path: str) -> Optional[Dict]:
-        """
-        Fetch data from either a URL or a local file path.
-
-        :param path: The path or URL to fetch data from.
-        :return: The fetched data, or None if an error occurs.
-        """
+    def __fetch_data(self, path: str) -> Any:
         if self.__repo_path_url:
-            response = requests.get(path)
-            if response.status_code == 200:
-                return response.json()
-            else:
+            try:
+                response = self.__session.get(path, timeout=self.__timeout)
+            except requests.Timeout as error:
+                raise UpstreamUnavailableError("The Scripture repository timed out.") from error
+            except requests.RequestException as error:
+                raise UpstreamUnavailableError("The Scripture repository is unavailable.") from error
+
+            if response.status_code == 404:
                 return None
-        else:
-            if os.path.isfile(path):
-                with open(path, 'r') as file:
-                    return json.load(file)
-            else:
-                return None
+            if response.status_code < 200 or response.status_code >= 300:
+                raise UpstreamUnavailableError(
+                    f"The Scripture repository returned HTTP {response.status_code}."
+                )
+            try:
+                payload = response.json()
+            except (ValueError, requests.RequestException) as error:
+                raise DataValidationError("The Scripture repository returned invalid JSON.") from error
+            if not isinstance(payload, (dict, list)):
+                raise DataValidationError("The Scripture repository returned an invalid JSON value.")
+            return payload
+
+        file_path = Path(path)
+        if not file_path.is_file():
+            return None
+        try:
+            with file_path.open("r", encoding="utf-8") as file_handle:
+                payload = json.load(file_handle)
+        except (OSError, json.JSONDecodeError) as error:
+            raise DataValidationError(f"Unable to read Scripture data from {file_path}.") from error
+        if not isinstance(payload, (dict, list)):
+            raise DataValidationError(f"Scripture data in {file_path} has an invalid shape.")
+        return payload
 
     def __retrieve_chapter_data(self, abbreviation: str, book: int, chapter: int) -> Dict:
-        """
-        Retrieve chapter data for a given book and chapter.
-
-        :param abbreviation: Bible translation abbreviation.
-        :param book: The book of the Bible.
-        :param chapter: The chapter.
-        :return: Chapter data.
-        :raises FileNotFoundError: If the chapter data is not found.
-        """
-        chapter_file = f"{str(book)}/{chapter}.json" if self.__repo_path_url else os.path.join(str(book),
-                                                                                               f"{chapter}.json")
+        chapter_file = (
+            f"{book}/{chapter}.json"
+            if self.__repo_path_url
+            else os.path.join(str(book), f"{chapter}.json")
+        )
         chapter_data = self.__fetch_data(self.__generate_path(abbreviation, chapter_file))
         if chapter_data is None:
-            raise FileNotFoundError(f"Chapter:{chapter} in book:{book} for {abbreviation} not found.")
+            raise ScriptureNotFoundError(
+                f"Chapter:{chapter} in book:{book} for {abbreviation} not found."
+            )
+        if not isinstance(chapter_data, dict):
+            raise DataValidationError("Chapter data must be a JSON object.")
         return chapter_data
