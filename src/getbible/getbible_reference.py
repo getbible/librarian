@@ -205,8 +205,12 @@ class GetBibleReference:
                 if not part.isdigit():
                     return None
                 verse = int(part)
-                if not self.__valid_verse_number(verse):
+                if verse < 1:
                     return None
+                if verse > self.__max_verse_number:
+                    raise RequestLimitError(
+                        f"Verse numbers cannot exceed {self.__max_verse_number}."
+                    )
                 self.__append_bounded(verse_list, seen, verse)
                 continue
 
@@ -218,12 +222,12 @@ class GetBibleReference:
                     return None
                 start = int(start_text)
                 end = int(end_text)
-                if (
-                    not self.__valid_verse_number(start)
-                    or not self.__valid_verse_number(end)
-                    or start > end
-                ):
+                if start < 1 or end < 1 or start > end:
                     return None
+                if start > self.__max_verse_number or end > self.__max_verse_number:
+                    raise RequestLimitError(
+                        f"Verse numbers cannot exceed {self.__max_verse_number}."
+                    )
                 range_size = end - start + 1
                 if range_size > self.__max_verses or len(seen) + range_size > self.__max_verses:
                     raise RequestLimitError(
@@ -234,13 +238,21 @@ class GetBibleReference:
                     self.__append_bounded(verse_list, seen, verse)
             elif start_text.isdigit():
                 verse = int(start_text)
-                if not self.__valid_verse_number(verse):
+                if verse < 1:
                     return None
+                if verse > self.__max_verse_number:
+                    raise RequestLimitError(
+                        f"Verse numbers cannot exceed {self.__max_verse_number}."
+                    )
                 self.__append_bounded(verse_list, seen, verse)
             elif end_text.isdigit():
                 verse = int(end_text)
-                if not self.__valid_verse_number(verse):
+                if verse < 1:
                     return None
+                if verse > self.__max_verse_number:
+                    raise RequestLimitError(
+                        f"Verse numbers cannot exceed {self.__max_verse_number}."
+                    )
                 self.__append_bounded(verse_list, seen, verse)
             else:
                 return None
@@ -256,9 +268,6 @@ class GetBibleReference:
             )
         seen.add(verse)
         values.append(verse)
-
-    def __valid_verse_number(self, verse: int) -> bool:
-        return 1 <= verse <= self.__max_verse_number
 
     def __manage_local_cache(
         self,
