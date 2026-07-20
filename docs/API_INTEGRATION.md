@@ -82,11 +82,20 @@ URL-decode values exactly once and pass only supplied, validated filters:
 
 ```python
 criteria = SearchBible.from_value(validated_filter_values)
-response = bible.search(query, translation, criteria)
+rate_tier = "strict" if criteria.expensive else "normal"
+with limiter.reserve(caller_identity, tier=rate_tier):
+    response = bible.search(query, translation, criteria)
 ```
 
 Do not pass raw query values through Python truthiness (`bool("false")` is
 `True`), silently ignore unknown filters, or expose regular expressions.
+
+The strict tier must have a lower sustained rate and burst than the normal
+tier. Apply it before calling `search()`; do not discover that a request is
+expensive only after loading a translation. Independently cap concurrent
+Search requests and place an application deadline outside Librarian's
+cooperative deadline. Recommended starting values and timeout ordering are in
+[Multi-worker API operations](OPERATIONS.md).
 
 Return `bible.search()` directly as JSON. Its `results` object retains the same
 chapter-keyed Scripture structure as `select()`; `query` and `matches` are the
@@ -127,3 +136,12 @@ The search response `query.sha` identifies the exact translation payload and
 text by default; application and reverse-proxy access logs should retain
 request identifiers, lengths, counts, status, and timing without recording the
 query string.
+
+For a shared Redis, Memcached, filesystem, or proxy response cache, wrap the
+entire lookup/call/write transaction in `source_operation()` and prefix the key
+with `source.cache_namespace`. Activate a completed immutable mirror using
+`transition_source(revision, purge_callback)`. The transition excludes readers,
+serializes the external purge, commits the generation only after purge
+succeeds, and causes every worker to invalidate process-local state before it
+serves the new generation. Query and Search still require separate response
+cache instances even when they use the same source revision.

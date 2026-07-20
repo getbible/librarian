@@ -17,6 +17,7 @@
 | `getbible.py` | Public facade, grouped scripture output, and cache coordination |
 | `repository_client.py` | Remote/local resource access, retries, timeouts, and fork-safe connection pooling |
 | `translation_cache.py` | SHA validation, disk persistence, atomic replacement, and stale fallback |
+| `source_generation.py` | Atomic mirror generations, cross-worker barriers, response-cache namespaces, and invalidation |
 | `search.py` | Criteria validation, corpus construction, postings indexes, matching, scoring, and pagination |
 | `getbible_reference.py` | Reference parsing and translation-aware LRU caching |
 | `getbible_book_number.py` | Translation alias selection and fallback |
@@ -81,3 +82,10 @@ separates them. Query maps `GET /v2/{translation}/{reference}` to `select()`;
 Search maps `GET /v2/{translation}?q=...` to `search()`. They run with separate
 process and cache budgets. The earlier combined `/v2/search/{translation}`
 shape is not part of the supported deployment contract.
+
+The source-generation layer is independent of per-translation freshness. A
+deployment activates a completed immutable mirror revision with
+`transition_source()`. Requests and external response-cache transactions use
+`source_operation()` so a purge and generation change cannot race a read. The
+stable repository namespace plus monotonic generation prevents old response
+keys from becoming valid again after a transition.
