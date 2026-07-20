@@ -1,9 +1,9 @@
 name: Restore production hardening patch
 
 on:
-  push:
+  pull_request:
     branches:
-      - agent/production-release-hardening
+      - master
   workflow_dispatch:
 
 permissions:
@@ -15,7 +15,6 @@ concurrency:
 
 jobs:
   restore:
-    if: github.actor != 'github-actions[bot]'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     env:
