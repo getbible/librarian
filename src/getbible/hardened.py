@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import copy
+import json
 import os
 import threading
 import time
@@ -39,17 +41,53 @@ class RequestLimits:
                 raise TypeError(f"{name} must be an integer.")
             if value < 1:
                 raise ValueError(f"{name} must be positive.")
-        # The parser applies this hard ceiling before materializing a range.
         if self.max_verses_per_reference > 200:
             raise ValueError("max_verses_per_reference cannot exceed the parser ceiling of 200.")
 
 
-class GetBible(_BaseGetBible):
-    """The public Librarian client with bounded parsing and typed failures.
+@dataclass(frozen=True, slots=True)
+class SearchLimits:
+    """Deterministic search work, output, and deadline budgets."""
 
-    Existing retrieval and search response contracts are preserved. Added
-    limits reject abusive input before network or cache work is performed.
-    """
+    max_query_length: int = 500
+    min_substring_length: int = 3
+    max_terms: int = 32
+    max_exclusion_length: int = 128
+    max_filter_values: int = 83
+    max_work_units: int = 500_000
+    max_response_bytes: int = 8 * 1024 * 1024
+    deadline_seconds: float = 10.0
+    strict_rate_tier_work_units: int = 100_000
+
+    def __post_init__(self) -> None:
+        integer_fields = (
+            "max_query_length",
+            "min_substring_length",
+            "max_terms",
+            "max_exclusion_length",
+            "max_filter_values",
+            "max_work_units",
+            "max_response_bytes",
+            "strict_rate_tier_work_units",
+        )
+        for name in integer_fields:
+            value = getattr(self, name)
+            if not isinstance(value, int) or isinstance(value, bool):
+                raise TypeError(f"{name} must be an integer.")
+            if value < 1:
+                raise ValueError(f"{name} must be positive.")
+        if not isinstance(self.deadline_seconds, int | float) or isinstance(
+            self.deadline_seconds, bool
+        ):
+            raise TypeError("deadline_seconds must be numeric.")
+        if self.deadline_seconds <= 0:
+            raise ValueError("deadline_seconds must be positive.")
+        if self.strict_rate_tier_work_units > self.max_work_units:
+            raise ValueError("strict_rate_tier_work_units cannot exceed max_work_units.")
+
+
+class GetBible(_BaseGetBible):
+    """The public Librarian client with bounded parsing and typed failures."""
 
     def __init__(
         self,
@@ -68,11 +106,13 @@ class GetBible(_BaseGetBible):
         cache_ttl_jitter: float = 0.1,
         *,
         request_limits: RequestLimits | None = None,
+        search_limits: SearchLimits | None = None,
         negative_translation_cache_limit: int = 64,
         negative_translation_ttl: float = 300.0,
         max_response_bytes: int = 128 * 1024 * 1024,
     ) -> None:
         self.request_limits = request_limits or RequestLimits()
+        self.search_limits = search_limits or SearchLimits()
         self._negative_translation_cache_limit = self._bounded_integer(
             "negative_translation_cache_limit",
             negative_translation_cache_limit,
@@ -114,20 +154,19 @@ class GetBible(_BaseGetBible):
         self._negative_translation_evictions = 0
 
     def select(self, reference: str, abbreviation: str | None = "kjv") -> dict[str, Any]:
-        """Return verses after enforcing reference and total-work limits."""
+        """Return caller-owned verses after enforcing request limits."""
         code = self._validated_translation_code(abbreviation)
         self._validated_references(reference, code)
         if not self.valid_translation(code):
             raise TranslationNotFoundError(f"Translation ({code}) not found.")
         try:
-            return super().select(reference, code)
+            return copy.deepcopy(super().select(reference, code))
         except ReferenceValidationError:
             raise
         except ValueError as error:
             raise ReferenceValidationError(str(error)) from error
 
     def valid_reference(self, reference: str, abbreviation: str | None = "kjv") -> bool:
-        """Return whether one bounded reference is structurally resolvable."""
         if not isinstance(reference, str) or len(reference) > self.request_limits.max_input_length:
             return False
         return super().valid_reference(reference, abbreviation)
@@ -138,7 +177,6 @@ class GetBible(_BaseGetBible):
             code = self._validated_translation_code(abbreviation)
         except (TypeError, ValueError):
             return False
-
         if self._negative_translation_cached(code):
             return False
         with self._translation_validation_locks.hold(code):
@@ -158,33 +196,52 @@ class GetBible(_BaseGetBible):
         abbreviation: str | None = "kjv",
         criteria: SearchBible | dict[str, Any] | str | None = None,
     ) -> dict[str, Any]:
-        """Search only after cheap input and criteria checks have passed."""
-        if not isinstance(query, str):
-            raise SearchValidationError("Search query must be a string.")
-        stripped_query = query.strip()
-        if not stripped_query:
-            raise SearchValidationError("Search query cannot be empty.")
-        if len(stripped_query) > 500:
-            raise RequestLimitError("Search query cannot exceed 500 characters.")
-        parsed = SearchBible.from_value(criteria)
-        if parsed.offset > self.request_limits.max_search_offset:
+        """Search after deterministic validation and return caller-owned data."""
+        started = time.monotonic()
+        stripped_query, parsed, work_units = self._validated_search(query, criteria)
+        code = self._validated_translation_code(abbreviation)
+        if not self.valid_translation(code):
+            raise TranslationNotFoundError(f"Translation ({code}) not found.")
+        self._check_search_deadline(started)
+        response = super().search(stripped_query, code, parsed)
+        self._check_search_deadline(started)
+        owned = copy.deepcopy(response)
+        encoded_size = len(
+            json.dumps(owned, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+        )
+        if encoded_size > self.search_limits.max_response_bytes:
             raise RequestLimitError(
-                f"Search offset cannot exceed {self.request_limits.max_search_offset}."
+                "Search response exceeds the configured response-volume budget."
             )
-        if len(parsed.books) > self.request_limits.max_search_books:
-            raise RequestLimitError(
-                f"Search cannot select more than {self.request_limits.max_search_books} books."
+        owned["query"]["work"] = {
+            "units": work_units,
+            "strict_rate_tier": work_units > self.search_limits.strict_rate_tier_work_units,
+            "deadline_seconds": float(self.search_limits.deadline_seconds),
+            "response_bytes": encoded_size,
+        }
+        return owned
+
+    def warm_translation(
+        self,
+        abbreviation: str | None = "kjv",
+        *,
+        case_sensitive: bool = False,
+        diacritics: str = "sensitive",
+    ) -> dict[str, Any]:
+        """Warm only translations proven available before cache/lock entry."""
+        code = self._validated_translation_code(abbreviation)
+        if not self.valid_translation(code):
+            raise TranslationNotFoundError(f"Translation ({code}) not found.")
+        return copy.deepcopy(
+            super().warm_translation(
+                code,
+                case_sensitive=case_sensitive,
+                diacritics=diacritics,
             )
-        if len(parsed.exclude) > self.request_limits.max_search_exclusions:
-            raise RequestLimitError(
-                "Search cannot contain more than "
-                f"{self.request_limits.max_search_exclusions} exclusions."
-            )
-        return super().search(stripped_query, abbreviation, parsed)
+        )
 
     def cache_info(self) -> dict[str, Any]:
-        """Return base telemetry plus request and negative-cache limits."""
-        state = super().cache_info()
+        state = copy.deepcopy(super().cache_info())
         now = time.monotonic()
         with self._missing_translations_guard:
             self._purge_expired_missing(now)
@@ -197,6 +254,7 @@ class GetBible(_BaseGetBible):
                 "evictions": self._negative_translation_evictions,
             }
         state["request_limits"] = asdict(self.request_limits)
+        state["search_limits"] = asdict(self.search_limits)
         state["active_translation_validation_locks"] = self._translation_validation_locks.size
         state["repository_max_response_bytes"] = self._repository.max_response_bytes
         return state
@@ -205,6 +263,59 @@ class GetBible(_BaseGetBible):
         with self._missing_translations_guard:
             self._missing_translations.clear()
         super().close()
+
+    def _validated_search(
+        self,
+        query: str,
+        criteria: SearchBible | dict[str, Any] | str | None,
+    ) -> tuple[str, SearchBible, int]:
+        if not isinstance(query, str):
+            raise SearchValidationError("Search query must be a string.")
+        stripped_query = query.strip()
+        if not stripped_query:
+            raise SearchValidationError("Search query cannot be empty.")
+        if len(stripped_query) > self.search_limits.max_query_length:
+            raise RequestLimitError(
+                f"Search query cannot exceed {self.search_limits.max_query_length} characters."
+            )
+        parsed = SearchBible.from_value(criteria)
+        if parsed.offset > self.request_limits.max_search_offset:
+            raise RequestLimitError(
+                f"Search offset cannot exceed {self.request_limits.max_search_offset}."
+            )
+        if len(parsed.books) > min(
+            self.request_limits.max_search_books,
+            self.search_limits.max_filter_values,
+        ):
+            raise RequestLimitError("Search contains too many book filters.")
+        if len(parsed.exclude) > self.request_limits.max_search_exclusions:
+            raise RequestLimitError("Search contains too many exclusion filters.")
+        if any(len(term) > self.search_limits.max_exclusion_length for term in parsed.exclude):
+            raise RequestLimitError("Search exclusion term is too long.")
+        terms = [term for term in stripped_query.split() if term]
+        if len(terms) > self.search_limits.max_terms:
+            raise RequestLimitError("Search contains too many terms.")
+        if parsed.match == "substring" and any(
+            len(term) < self.search_limits.min_substring_length for term in terms
+        ):
+            raise SearchValidationError(
+                "Substring terms must contain at least "
+                f"{self.search_limits.min_substring_length} characters."
+            )
+        filter_factor = max(1, len(parsed.books) + len(parsed.exclude))
+        pagination_factor = parsed.offset + parsed.limit
+        mode_factor = 4 if parsed.match == "substring" else 1
+        phrase_factor = 2 if parsed.words == "phrase" else 1
+        work_units = max(1, len(stripped_query)) * max(1, len(terms))
+        work_units *= filter_factor * mode_factor * phrase_factor
+        work_units += pagination_factor
+        if work_units > self.search_limits.max_work_units:
+            raise RequestLimitError("Search exceeds the configured deterministic work budget.")
+        return stripped_query, parsed, work_units
+
+    def _check_search_deadline(self, started: float) -> None:
+        if time.monotonic() - started > self.search_limits.deadline_seconds:
+            raise RequestLimitError("Search exceeded the configured cooperative deadline.")
 
     def _validated_references(self, reference: str, abbreviation: str) -> None:
         if not isinstance(reference, str):
@@ -216,10 +327,8 @@ class GetBible(_BaseGetBible):
         references = reference.split(";")
         if len(references) > self.request_limits.max_references:
             raise RequestLimitError(
-                "A request cannot contain more than "
-                f"{self.request_limits.max_references} references."
+                f"A request cannot contain more than {self.request_limits.max_references} references."
             )
-
         total_verses = 0
         parser = self._GetBible__get
         for raw_reference in references:
@@ -236,8 +345,7 @@ class GetBible(_BaseGetBible):
             total_verses += selected
             if total_verses > self.request_limits.max_total_verses:
                 raise RequestLimitError(
-                    "A request cannot select more than "
-                    f"{self.request_limits.max_total_verses} verses."
+                    f"A request cannot select more than {self.request_limits.max_total_verses} verses."
                 )
 
     def _negative_translation_cached(self, code: str) -> bool:
