@@ -9,13 +9,14 @@
 ## Local development
 
 ```bash
-python -m venv .venv
-.venv/bin/python -m pip install -r requirements-dev.txt
-.venv/bin/python -m unittest discover -s tests -v
-.venv/bin/ruff check src tests benchmarks scripts examples
-.venv/bin/python -m build
-.venv/bin/python -m twine check dist/*
+./scripts/run_release_gate.sh
 ```
+
+This creates or reuses `.venv`, installs the development toolchain, and runs
+the deterministic tests, lint, security and dependency scans, package checks,
+and an isolated-wheel import. It avoids accidental reliance on globally
+installed tools. See the [release gate](RELEASE_GATE.md) for the individual
+commands, expected test diagnostics, and environment overrides.
 
 ## Deterministic tests
 
@@ -24,32 +25,37 @@ The default suite uses repository fixtures and does not depend on the public API
 ## Live integration
 
 ```bash
-GETBIBLE_RUN_LIVE_TESTS=1 .venv/bin/python -m unittest \
-  tests.test_getbible tests.test_live_search -v
+./scripts/run_release_gate.sh --live
 ```
 
-GitHub runs the live suite weekly and on manual dispatch. The scheduled job detects upstream API or fixture expectation drift without making pull-request CI dependent on the network.
+GitHub runs the **Live API Integration** workflow weekly and on manual dispatch.
+The scheduled job detects upstream API or fixture expectation drift without
+making pull-request CI dependent on the network.
 
 ## CI artifacts
 
-Every push and pull request to `master` or `staging` runs:
+Every push and pull request to `master` or `staging`, plus a manual **CI**
+workflow dispatch, runs:
 
 - Python 3.10–3.14 deterministic tests;
 - Ruff checks;
+- Bandit and dependency-advisory checks;
 - source and wheel builds;
 - Twine package validation;
+- installation and import of the wheel in isolation;
 - upload of the built distributions as a GitHub Actions artifact.
 
 The artifact can be downloaded and installed in a clean environment before release.
 
 ## Release preparation
 
-1. Confirm `staging` CI is green.
-2. Run the live integration workflow.
-3. Review `CHANGELOG.md` and replace `Unreleased` with the release date.
-4. Confirm the version in `pyproject.toml`.
-5. Merge the exact release state into `master`.
-6. Open the GitHub Actions **Release** workflow, choose **Run workflow**, and enter the version without the leading `v`.
+1. Run the local release gate and resolve every failure.
+2. Confirm the exact `staging` commit has a green **CI** workflow run.
+3. Manually run **Live API Integration** for the same `staging` commit.
+4. Review `CHANGELOG.md` and replace `Unreleased` with the release date.
+5. Confirm the version in `pyproject.toml`.
+6. Merge the exact release state into `master`.
+7. Open the GitHub Actions **Release** workflow, choose **Run workflow**, and enter the version without the leading `v`.
 
 The workflow freezes the current `master` SHA in its preparation job, requires
 the entered version to match `pyproject.toml`, and passes that exact SHA to

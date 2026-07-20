@@ -191,20 +191,20 @@ python -m venv .venv
 ## Development
 
 ```bash
-python -m venv .venv
-.venv/bin/python -m pip install -r requirements-dev.txt
-.venv/bin/python -m unittest discover -s tests -v
-.venv/bin/ruff check src tests benchmarks scripts examples
-.venv/bin/python -m build
-.venv/bin/python -m twine check dist/*
+./scripts/run_release_gate.sh
 ```
 
-Live API tests are intentionally opt-in:
+This creates or reuses `.venv`, installs every development tool, and runs the
+local deterministic release gate. GitHub's manually dispatchable **CI**
+workflow is the authoritative Python 3.10–3.14 check. Live API tests remain
+separate and intentionally opt-in:
 
 ```bash
-GETBIBLE_RUN_LIVE_TESTS=1 .venv/bin/python -m unittest \
-  tests.test_getbible tests.test_live_search -v
+./scripts/run_release_gate.sh --live
 ```
+
+See the [security and reliability release gate](docs/RELEASE_GATE.md) for
+manual commands, expected diagnostics, and GitHub workflow instructions.
 
 ## License
 
