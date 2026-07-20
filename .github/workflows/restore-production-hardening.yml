@@ -1,9 +1,6 @@
-name: Restore production hardening patch
+name: Inspect production hardening archive
 
 on:
-  push:
-    branches:
-      - agent/production-release-hardening
   pull_request:
     branches:
       - master
@@ -12,14 +9,10 @@ on:
 permissions:
   contents: write
 
-concurrency:
-  group: restore-production-hardening
-  cancel-in-progress: false
-
 jobs:
-  restore:
+  inspect:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 10
     steps:
       - name: Checkout branch
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
@@ -27,66 +20,20 @@ jobs:
           ref: agent/production-release-hardening
           fetch-depth: 0
 
-      - name: Restore base and audited patch archive
+      - name: Record archive format
         run: |
           set -euo pipefail
-          archive="${RUNNER_TEMP}/patch.archive"
-          decoded="${RUNNER_TEMP}/patch.decoded"
-          cp _recovery/patch.tar.gz "${archive}"
-          file "${archive}"
-
-          extract_archive() {
-            local input="$1"
-            if tar -tzf "${input}" >/dev/null 2>&1; then
-              tar -xzf "${input}" -C .
-              return 0
-            fi
-            if unzip -tq "${input}" >/dev/null 2>&1; then
-              unzip -oq "${input}" -d .
-              return 0
-            fi
-            if tar -tf "${input}" >/dev/null 2>&1; then
-              tar -xf "${input}" -C .
-              return 0
-            fi
-            return 1
-          }
-
-          git rm -r --ignore-unmatch .
-          git checkout 1020df0f67344902af69d2dc6a9a128aa52e646f -- .
-
-          if ! extract_archive "${archive}"; then
-            base64 --decode "${archive}" > "${decoded}"
-            file "${decoded}"
-            extract_archive "${decoded}"
-          fi
-
-          rm -rf _recovery
-          rm -f .github/workflows/restore-production-hardening.yml
-
-      - name: Set up Python
-        uses: actions/setup-python@42375524e23c412d93fb67b49958b491fce71c38 # v5.4.0
-        with:
-          python-version: "3.12"
-          cache: pip
-          cache-dependency-path: |
-            pyproject.toml
-            requirements.txt
-            requirements-dev.txt
-
-      - name: Run deterministic validation
-        run: |
-          set -euo pipefail
-          python -m pip install --upgrade pip
-          python -m pip install -e .
-          python -m compileall -q src tests
-          python -m unittest discover -s tests -v
-
-      - name: Commit restored patch
-        run: |
-          set -euo pipefail
+          {
+            file _recovery/patch.tar.gz
+            stat --printf='size=%s\n' _recovery/patch.tar.gz
+            xxd -l 64 -p _recovery/patch.tar.gz
+            printf 'tar_gzip='; if tar -tzf _recovery/patch.tar.gz >/dev/null 2>&1; then echo yes; else echo no; fi
+            printf 'zip='; if unzip -tq _recovery/patch.tar.gz >/dev/null 2>&1; then echo yes; else echo no; fi
+            printf 'tar='; if tar -tf _recovery/patch.tar.gz >/dev/null 2>&1; then echo yes; else echo no; fi
+            printf 'base64='; if base64 --decode _recovery/patch.tar.gz >/tmp/decoded 2>/dev/null; then echo yes; file /tmp/decoded; stat --printf='decoded_size=%s\n' /tmp/decoded; xxd -l 64 -p /tmp/decoded; else echo no; fi
+          } > _recovery/diagnostic.txt
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add -A
-          git commit -m "Restore production release hardening"
+          git add _recovery/diagnostic.txt
+          git commit -m "Record hardening archive format"
           git push origin HEAD:agent/production-release-hardening
