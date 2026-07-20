@@ -142,7 +142,7 @@ jobs:
           python -m venv "${RUNNER_TEMP}/getbible-wheel"
           "${RUNNER_TEMP}/getbible-wheel/bin/python" -m pip install dist/*.whl
           cd "${RUNNER_TEMP}"
-          "${RUNNER_TEMP}/getbible-wheel/bin/python" -c "from getbible import GetBible, RequestLimits, SearchBible; assert SearchBible().limit == 100; assert RequestLimits().max_references == 8; GetBible().close()"
+          "${RUNNER_TEMP}/getbible-wheel/bin/python" -c "from getbible import GetBible, RequestLimits, SearchBible, SearchLimits, SourceGeneration; assert SearchBible().limit == 100; assert RequestLimits().max_references == 8; assert SearchLimits().max_work_units == 50000000; assert SourceGeneration('test', 0, 'initial', 0).cache_namespace == 'test:g0'; GetBible().close()"
 
       - name: Upload distributions
         uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08 # v4.6.0

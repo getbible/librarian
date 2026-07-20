@@ -43,6 +43,7 @@ class TestRepositorySources(unittest.TestCase):
         self.remote = GetBible(
             repo_path=self.repository_url,
             cache_dir=cache_root / "remote",
+            require_checksums=False,
         )
 
     def tearDown(self) -> None:

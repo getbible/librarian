@@ -5,7 +5,7 @@
 ```python
 from datetime import timedelta
 
-from getbible import GetBible
+from getbible import GetBible, SearchLimits
 
 
 bible = GetBible(
@@ -22,10 +22,15 @@ bible = GetBible(
     search_corpus_limit=4,
     translation_cache_limit=4,
     cache_ttl_jitter=0.1,
+    require_checksums=True,
+    search_limits=SearchLimits(),
 )
 ```
 
-All constructor arguments are optional. The defaults use GetBible API v2 and the operating system's user cache directory.
+All constructor arguments are optional. The defaults use GetBible API v2 and
+the operating system's user cache directory. Checksums are required
+automatically for HTTP/HTTPS repositories and optional for local repositories;
+pass `require_checksums=True` for a production local mirror.
 
 For services, construct a long-lived client rather than one client per request. The client is safe for concurrent threads, and each process receives fork-safe HTTP sessions.
 
@@ -144,7 +149,8 @@ Expected paths include:
 /srv/getbible-data/v2/kjv.sha
 ```
 
-The `.sha` resource is optional for local fixtures but recommended for production repositories.
+The `.sha` resource is optional for local fixtures and required for remote
+repositories. Production local mirrors should opt into the same enforcement.
 
 ## Errors
 

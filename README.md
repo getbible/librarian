@@ -44,10 +44,16 @@ print(encoded)
 ```python
 import json
 
-from getbible import GetBible, SearchBible
+from getbible import GetBible, SearchBible, SearchLimits
 
 
-bible = GetBible()
+bible = GetBible(
+    search_limits=SearchLimits(
+        max_work_units=50_000_000,
+        max_response_bytes=4 * 1024 * 1024,
+        deadline_seconds=5.0,
+    )
+)
 criteria = SearchBible(
     words="all",
     match="whole_word",
@@ -66,7 +72,7 @@ print(json.dumps(response, ensure_ascii=False, indent=2))
 
 Search responses contain three top-level objects:
 
-- `query`: normalized criteria, translation metadata, exact total, pagination, SHA, and cache state.
+- `query`: normalized criteria, translation metadata, exact total, pagination, SHA, cache state, and deterministic search cost.
 - `results`: the same grouped scripture object format returned by `select()`.
 - `matches`: ordered per-verse match metadata, including score, occurrences, and matched terms.
 
@@ -120,10 +126,15 @@ bible = GetBible(
     cache_dir="/var/cache/getbible",
     cache_ttl=timedelta(days=7),
     strict_freshness=False,
+    require_checksums=True,
 )
 ```
 
-Cache replacements are checksum-verified, process-locked, and atomic. A last-known-good translation remains available during temporary repository failures unless `strict_freshness=True`.
+Remote production checksums are required. Full corpora and their independent
+books indexes are completely validated before immutable, content-addressed
+payloads are atomically committed. A last-known-good translation remains
+available during temporary repository or newly published integrity failures
+unless `strict_freshness=True`.
 
 Production caches are bounded by default. A service can warm its expected
 translation without issuing an artificial query and can expose cache counters to
@@ -138,6 +149,10 @@ bible = GetBible(
 bible.warm_translation("kjv")
 cache_state = bible.cache_info()
 ```
+
+Atomically updated local mirrors can coordinate application response caches and
+worker-local invalidation with `source_operation()` and
+`transition_source()`. See [Cache validation and retention](docs/CACHING.md).
 
 Call `bible.close()` during worker shutdown, or use `GetBible` as a context
 manager in short-lived scripts.

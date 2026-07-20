@@ -23,10 +23,17 @@ CI runs deterministic tests on Python 3.10 through 3.14, then installs and impor
 - malformed or reversed ranges never resolve to verse 1 or another unintended verse;
 - per-reference and aggregate verse budgets are both enforced;
 - repeated missing translations use bounded negative caching;
+- missing Search and warm-up translations are rejected before abbreviation-specific translation payload paths and locks;
 - oversized local and remote repository bodies are rejected;
 - repository traversal is rejected;
 - blank and excessive search inputs fail before translation loading;
-- cache entries cannot be corrupted through a returned mutable verse list;
+- substring, deterministic work, output-volume, filter, and cooperative deadline budgets fail closed;
+- full corpora and independent books indexes are completely validated before a versioned content-addressed payload is committed;
+- production full-translation and chapter checksums are required and compared;
+- invalid upstream refreshes preserve the last-known-good corpus;
+- Query and Search return deep copies that cannot corrupt cached verses or metadata;
+- source-generation purge failures do not commit and successful transitions invalidate other workers;
+- the release artifact is built once, attested, trusted-published, and reused for the GitHub release;
 - all historical parser, Unicode, search, cache, local/HTTP parity, and packaging tests still pass.
 
 ## Operational gate

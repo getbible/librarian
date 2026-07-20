@@ -9,10 +9,14 @@ independent services so search CPU and memory cannot consume Query capacity.
 Create one client during application initialization or once per worker. Do not construct a new client for every HTTP request.
 
 ```python
-from getbible import GetBible
+from getbible import GetBible, SearchLimits
 
 
-bible = GetBible(cache_dir="/var/cache/getbible")
+bible = GetBible(
+    cache_dir="/var/cache/getbible",
+    require_checksums=True,
+    search_limits=SearchLimits(deadline_seconds=5.0),
+)
 
 
 def execute_scripture_query(reference: str, translation: str) -> dict:
@@ -94,6 +98,30 @@ same local API mirror but should never share a writable cache directory.
 
 The library restricts a page to 1,000 matches. The API layer may impose a smaller public maximum. Exact totals are reported independently of the returned page.
 
+## Search tiers and outer deadlines
+
+Parse `SearchBible` before entering a rate-limiter reservation. Its
+`expensive` property is deliberately corpus-independent:
+
+```python
+criteria = SearchBible.from_value(filters)
+tier = "strict" if criteria.expensive else "normal"
+with limiter.reserve(identity, tier=tier):
+    response = bible.search(query, translation, criteria)
+```
+
+Use independent counters for the two tiers. A production starting point is 60
+normal searches per minute with a burst of 10, and 12 strict searches per
+minute with a burst of 3, per authenticated identity and per source IP. Tune
+from measured capacity; never combine the strict and normal burst pools.
+
+The default cooperative Librarian deadline is 5 seconds. The application
+server should use a 7-second request deadline and the reverse proxy a 10-second
+upstream deadline, leaving time to translate a typed failure into a clean HTTP
+response. Repository connect/read timeouts govern source refresh separately.
+Do not rely on a proxy timeout to stop Python work: it disconnects the caller
+but does not itself cancel matching.
+
 ## Timeouts and retries
 
 Defaults:
@@ -104,6 +132,29 @@ Defaults:
 - Retry statuses: 429, 500, 502, 503, and 504.
 
 Override these through `GetBible()` when the hosting environment requires different limits.
+
+## systemd cgroup limits
+
+Maintained baseline drop-ins are provided for independent Query and Search
+units:
+
+```bash
+sudo install -D -m 0644 \
+  deploy/systemd/getbible-query.service.d/limits.conf \
+  /etc/systemd/system/getbible-query.service.d/limits.conf
+sudo install -D -m 0644 \
+  deploy/systemd/getbible-search.service.d/limits.conf \
+  /etc/systemd/system/getbible-search.service.d/limits.conf
+sudo systemctl daemon-reload
+sudo systemctl restart getbible-query.service getbible-search.service
+sudo systemctl show getbible-query.service getbible-search.service \
+  -p MemoryHigh -p MemoryMax -p MemorySwapMax -p CPUQuotaPerSecUSec -p TasksMax
+```
+
+The Query baseline is 512 MiB/200% CPU/64 tasks. Search is isolated at 3
+GiB/400% CPU/128 tasks. Both disable swap for the unit and stop on an OOM event.
+Treat these as tested starting limits: lower corpus counts before raising
+`MemoryMax`, and validate the chosen values under a full-translation load test.
 
 ## Monitoring
 

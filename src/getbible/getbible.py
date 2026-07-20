@@ -9,15 +9,30 @@ import re
 import threading
 import time
 from collections import OrderedDict
+from collections.abc import Iterator
+from contextlib import contextmanager
+from copy import deepcopy
 from dataclasses import dataclass
 from datetime import timedelta
 from typing import Any
 
 from ._keyed_locks import KeyedLockPool
-from .exceptions import CacheIntegrityError, RepositoryResourceNotFound
+from .exceptions import (
+    CacheIntegrityError,
+    RepositoryResourceNotFound,
+    RepositoryResponseError,
+    SearchLimitError,
+)
 from .getbible_reference import BookReference, GetBibleReference
 from .repository_client import RepositoryClient
-from .search import SearchBible, SearchEngine, SearchHit, TranslationCorpus
+from .search import (
+    SearchBible,
+    SearchEngine,
+    SearchHit,
+    SearchLimits,
+    TranslationCorpus,
+)
+from .source_generation import PurgeCallback, SourceCoordinator, SourceGeneration
 from .translation_cache import TranslationCache
 
 
@@ -74,6 +89,9 @@ class GetBible:
         search_corpus_limit: int | None = 4,
         translation_cache_limit: int | None = 4,
         cache_ttl_jitter: float = 0.1,
+        require_checksums: bool | None = None,
+        source_purge_callback: PurgeCallback | None = None,
+        search_limits: SearchLimits | None = None,
     ) -> None:
         reference_cache_limit = self._validated_cache_limit(
             "reference_cache_limit", reference_cache_limit
@@ -97,6 +115,14 @@ class GetBible:
             timeout=request_timeout,
             retries=request_retries,
         )
+        if require_checksums is not None and not isinstance(require_checksums, bool):
+            raise TypeError("require_checksums must be a boolean or null.")
+        self._require_checksums = (
+            self._repository.is_url if require_checksums is None else require_checksums
+        )
+        if search_limits is not None and not isinstance(search_limits, SearchLimits):
+            raise TypeError("search_limits must be a SearchLimits object or null.")
+        self.search_limits = search_limits or SearchLimits()
         self._cache_ttl_seconds = max(0.0, cache_ttl.total_seconds())
         self.__books_cache: OrderedDict[str, _CacheEntry] = OrderedDict()
         self.__chapters_cache: OrderedDict[str, _CacheEntry] = OrderedDict()
@@ -114,24 +140,35 @@ class GetBible:
             strict_freshness=strict_freshness,
             memory_limit=translation_cache_limit,
             refresh_jitter=cache_ttl_jitter,
+            require_checksums=self._require_checksums,
         )
         self._search_corpora: OrderedDict[str, TranslationCorpus] = OrderedDict()
+        self._source_coordinator = SourceCoordinator(
+            cache_root=self._translation_cache.cache_dir,
+            source=self._repository.repo_path,
+            version=self._repository.version,
+            invalidate_callback=self._invalidate_worker_caches,
+            purge_callback=source_purge_callback,
+        )
+        initial_generation = self._source_coordinator.info()["generation"]
+        self._translation_cache.set_source_generation(int(initial_generation))
 
     def select(self, reference: str, abbreviation: str | None = 'kjv') -> dict[str, Any]:
         """Return Bible verses using the established grouped result contract."""
-        abbreviation = self._validated_translation_code(abbreviation)
-        self.__check_translation(abbreviation)
-        result: dict[str, Any] = {}
-        for raw_reference in reference.split(';'):
-            ref = raw_reference.strip()
-            if not ref:
-                raise ValueError("Invalid empty reference.")
-            try:
-                book_reference = self.__get.ref(ref, abbreviation)
-            except ValueError as error:
-                raise ValueError(f"Invalid reference '{ref}'.") from error
-            self.__set_verse(abbreviation, book_reference, result)
-        return result
+        with self.source_operation():
+            abbreviation = self._validated_translation_code(abbreviation)
+            self.__check_translation(abbreviation)
+            result: dict[str, Any] = {}
+            for raw_reference in reference.split(';'):
+                ref = raw_reference.strip()
+                if not ref:
+                    raise ValueError("Invalid empty reference.")
+                try:
+                    book_reference = self.__get.ref(ref, abbreviation)
+                except ValueError as error:
+                    raise ValueError(f"Invalid reference '{ref}'.") from error
+                self.__set_verse(abbreviation, book_reference, result)
+            return result
 
     def scripture(self, reference: str, abbreviation: str | None = 'kjv') -> str:
         """Return :meth:`select` output encoded as JSON."""
@@ -149,18 +186,29 @@ class GetBible:
         :meth:`select`. ``query`` and ``matches`` add search-specific metadata
         without changing the established scripture objects.
         """
-        code = self._validated_translation_code(abbreviation)
-        parsed_criteria = SearchBible.from_value(criteria)
-        try:
-            corpus = self._search_corpus(code)
-        except RepositoryResourceNotFound as error:
-            raise FileNotFoundError(f"Translation ({code}) not found.") from error
-        engine = SearchEngine(
-            corpus,
-            lambda book: self.__get.book_number(book, code),
-        )
-        hits, total = engine.search(query, parsed_criteria)
-        return self._search_response(query, code, parsed_criteria, corpus, hits, total)
+        with self.source_operation():
+            code = self._validated_translation_code(abbreviation)
+            parsed_criteria = SearchBible.from_value(criteria)
+            try:
+                corpus = self._search_corpus(code)
+            except RepositoryResourceNotFound as error:
+                raise FileNotFoundError(f"Translation ({code}) not found.") from error
+            engine = SearchEngine(
+                corpus,
+                lambda book: self.__get.book_number(book, code),
+                self.search_limits,
+            )
+            hits, total = engine.search(query, parsed_criteria)
+            return self._search_response(
+                query,
+                code,
+                parsed_criteria,
+                corpus,
+                hits,
+                total,
+                engine.execution_info,
+                self.search_limits.max_response_bytes,
+            )
 
     def search_json(
         self,
@@ -187,22 +235,23 @@ class GetBible:
         only. Call it before a pre-fork server creates workers when copy-on-write
         sharing is desired.
         """
-        code = self._validated_translation_code(abbreviation)
-        criteria = SearchBible(
-            case_sensitive=case_sensitive,
-            diacritics=diacritics,
-            limit=1,
-        )
-        try:
-            corpus = self._search_corpus(code)
-        except RepositoryResourceNotFound as error:
-            raise FileNotFoundError(f"Translation ({code}) not found.") from error
-        corpus.index(criteria.case_sensitive, criteria.diacritics)
-        return {"abbreviation": code, **corpus.cache_info()}
+        with self.source_operation():
+            code = self._validated_translation_code(abbreviation)
+            criteria = SearchBible(
+                case_sensitive=case_sensitive,
+                diacritics=diacritics,
+                limit=1,
+            )
+            try:
+                corpus = self._search_corpus(code)
+            except RepositoryResourceNotFound as error:
+                raise FileNotFoundError(f"Translation ({code}) not found.") from error
+            corpus.index(criteria.case_sensitive, criteria.diacritics)
+            return {"abbreviation": code, **corpus.cache_info()}
 
     def cache_info(self) -> dict[str, Any]:
         """Return bounded-cache state and counters without exposing payloads."""
-        with self._cache_guard:
+        with self.source_operation(), self._cache_guard:
             corpora = {
                 code: corpus.cache_info()
                 for code, corpus in self._search_corpora.items()
@@ -226,7 +275,22 @@ class GetBible:
             "search_corpora": search_corpora,
             "translation_cache": self._translation_cache.cache_info(),
             "active_resource_locks": self._resource_locks.size,
+            "source": self._source_coordinator.info(),
         }
+
+    @contextmanager
+    def source_operation(self) -> Iterator[SourceGeneration]:
+        """Hold one source generation across an external cache transaction."""
+        with self._source_coordinator.source_operation() as generation:
+            yield generation
+
+    def transition_source(
+        self,
+        revision: str,
+        purge_callback: PurgeCallback | None = None,
+    ) -> dict[str, str | int | float]:
+        """Activate an immutable mirror revision and invalidate every worker cache."""
+        return self._source_coordinator.transition(revision, purge_callback).to_dict()
 
     def close(self) -> None:
         """Close repository HTTP sessions during application shutdown."""
@@ -250,7 +314,7 @@ class GetBible:
             return False
 
         key = f"books:{code}"
-        with self._resource_locks.hold(key):
+        with self.source_operation(), self._resource_locks.hold(key):
             with self._cache_guard:
                 entry = self.__books_cache.get(code)
             if entry is not None and self._is_fresh(entry):
@@ -340,14 +404,21 @@ class GetBible:
         corpus: TranslationCorpus,
         hits: list[SearchHit],
         total: int,
+        execution_info: dict[str, int | float | bool],
+        max_response_bytes: int,
     ) -> dict[str, Any]:
         results: dict[str, Any] = {}
         matches: list[dict[str, Any]] = []
+        accumulated_bytes = GetBible._json_bytes(corpus.translation_metadata)
+        if accumulated_bytes > max_response_bytes:
+            raise SearchLimitError(
+                "Search translation metadata exceeds the configured response-volume budget."
+            )
         for hit in hits:
             record = hit.record
             cache_key = f"{abbreviation}_{record.book_nr}_{record.chapter}"
             if cache_key not in results:
-                results[cache_key] = dict(corpus.chapter_metadata)
+                results[cache_key] = deepcopy(corpus.chapter_metadata)
                 results[cache_key].update(
                     {
                         "book_nr": record.book_nr,
@@ -358,27 +429,34 @@ class GetBible:
                         "verses": [],
                     }
                 )
+                accumulated_bytes += GetBible._json_bytes(results[cache_key])
             results[cache_key]["ref"].append(record.reference)
-            results[cache_key]["verses"].append(record.verse)
-            matches.append(
-                {
-                    "reference": record.reference,
-                    "book_nr": record.book_nr,
-                    "chapter": record.chapter,
-                    "verse": record.verse["verse"],
-                    "score": hit.score,
-                    "occurrences": hit.occurrences,
-                    "terms": list(hit.terms),
-                }
-            )
+            verse = deepcopy(record.verse)
+            match = {
+                "reference": record.reference,
+                "book_nr": record.book_nr,
+                "chapter": record.chapter,
+                "verse": record.verse["verse"],
+                "score": hit.score,
+                "occurrences": hit.occurrences,
+                "terms": list(hit.terms),
+            }
+            accumulated_bytes += GetBible._json_bytes(verse)
+            accumulated_bytes += GetBible._json_bytes(match)
+            if accumulated_bytes > max_response_bytes:
+                raise SearchLimitError(
+                    "Search results exceed the configured response-volume budget."
+                )
+            results[cache_key]["verses"].append(verse)
+            matches.append(match)
 
         returned = len(hits)
         checked_at, stale = corpus.cache_state()
-        return {
+        response = {
             "query": {
                 "text": query,
                 "criteria": criteria.to_dict(),
-                "translation": corpus.translation_metadata,
+                "translation": deepcopy(corpus.translation_metadata),
                 "sha": corpus.sha,
                 "total": total,
                 "offset": criteria.offset,
@@ -389,10 +467,34 @@ class GetBible:
                     "checked_at": checked_at,
                     "stale": stale,
                 },
+                "cost": {
+                    "work_units": execution_info["work_units"],
+                    "deadline_seconds": execution_info["deadline_seconds"],
+                    "expensive": execution_info["expensive"],
+                },
             },
             "results": results,
             "matches": matches,
         }
+        response_bytes = len(
+            json.dumps(
+                response,
+                ensure_ascii=False,
+                separators=(",", ":"),
+            ).encode("utf-8")
+        )
+        if response_bytes > max_response_bytes:
+            raise SearchLimitError(
+                f"Search response requires {response_bytes} bytes; the configured maximum "
+                f"is {max_response_bytes}."
+            )
+        return response
+
+    @staticmethod
+    def _json_bytes(value: Any) -> int:
+        return len(
+            json.dumps(value, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+        )
 
     def __set_verse(
         self,
@@ -414,16 +516,18 @@ class GetBible:
             if cache_key in result:
                 existing_verses = {str(item["verse"]) for item in result[cache_key]["verses"]}
                 if str(verse) not in existing_verses:
-                    result[cache_key]["verses"].append(verse_info)
+                    result[cache_key]["verses"].append(deepcopy(verse_info))
                 if book_ref.reference not in result[cache_key]["ref"]:
                     result[cache_key]["ref"].append(book_ref.reference)
                 continue
 
             result[cache_key] = {
-                key: value for key, value in chapter_data.items() if key != "verses"
+                key: deepcopy(value)
+                for key, value in chapter_data.items()
+                if key != "verses"
             }
             result[cache_key]["ref"] = [book_ref.reference]
-            result[cache_key]["verses"] = [verse_info]
+            result[cache_key]["verses"] = [deepcopy(verse_info)]
 
     def _chapter(self, abbreviation: str, book: int, chapter: int) -> dict[str, Any]:
         cache_key = f"{abbreviation}_{book}_{chapter}"
@@ -439,18 +543,16 @@ class GetBible:
             with self._cache_guard:
                 self._cache_stats["chapters"].misses += 1
 
-            if entry is not None and entry.sha:
-                try:
-                    remote_sha = self._repository.fetch_text(
-                        f"{abbreviation}/{book}/{chapter}.sha"
-                    ).strip()
-                except RepositoryResourceNotFound:
-                    remote_sha = ""
-                if remote_sha and remote_sha == entry.sha:
-                    entry.loaded_at = time.monotonic()
-                    with self._cache_guard:
-                        self.__chapters_cache.move_to_end(cache_key)
-                    return entry.data
+            checksum_path = f"{abbreviation}/{book}/{chapter}.sha"
+            remote_sha = self._published_checksum(
+                checksum_path,
+                f"chapter {abbreviation} {book}:{chapter}",
+            )
+            if entry is not None and entry.sha and remote_sha == entry.sha:
+                entry.loaded_at = time.monotonic()
+                with self._cache_guard:
+                    self.__chapters_cache.move_to_end(cache_key)
+                return entry.data
 
             relative_path = f"{abbreviation}/{book}/{chapter}.json"
             try:
@@ -459,18 +561,28 @@ class GetBible:
                 raise FileNotFoundError(
                     f"Chapter:{chapter} in book:{book} for {abbreviation} not found."
                 ) from error
+            if self._require_checksums and not remote_sha:
+                raise RepositoryResponseError(
+                    f"Chapter {abbreviation} {book}:{chapter} has no required checksum."
+                )
             try:
                 chapter_data = json.loads(raw)
             except (UnicodeDecodeError, json.JSONDecodeError) as error:
                 raise CacheIntegrityError(
                     f"Invalid chapter JSON for {abbreviation} {book}:{chapter}."
                 ) from error
-            if not isinstance(chapter_data, dict) or not isinstance(
-                chapter_data.get("verses"), list
-            ):
+            actual_sha = hashlib.sha1(raw, usedforsecurity=False).hexdigest()
+            if remote_sha and actual_sha != remote_sha:
                 raise CacheIntegrityError(
-                    f"Invalid chapter structure for {abbreviation} {book}:{chapter}."
+                    f"Checksum mismatch for chapter {abbreviation} {book}:{chapter}: "
+                    f"expected {remote_sha}, received {actual_sha}."
                 )
+            TranslationCache.validate_chapter_payload(
+                chapter_data,
+                abbreviation,
+                book,
+                chapter,
+            )
 
             chapter_data["verses"] = {
                 str(verse["verse"]): verse for verse in chapter_data["verses"]
@@ -478,7 +590,7 @@ class GetBible:
             loaded = _CacheEntry(
                 data=chapter_data,
                 loaded_at=time.monotonic(),
-                sha=hashlib.sha1(raw, usedforsecurity=False).hexdigest(),
+                sha=actual_sha,
             )
             with self._cache_guard:
                 self._put_bounded(
@@ -489,6 +601,26 @@ class GetBible:
                     "chapters",
                 )
             return chapter_data
+
+    def _published_checksum(self, relative_path: str, label: str) -> str:
+        try:
+            checksum = self._repository.fetch_text(relative_path).strip().lower()
+        except RepositoryResourceNotFound:
+            return ""
+        if not TranslationCache._valid_sha(checksum):
+            raise RepositoryResponseError(f"{label.capitalize()} publishes an invalid checksum.")
+        return checksum
+
+    def _invalidate_worker_caches(self, generation: SourceGeneration) -> None:
+        with self._cache_guard:
+            self.__books_cache.clear()
+            self.__chapters_cache.clear()
+            self._search_corpora.clear()
+        self._translation_cache.set_source_generation(generation.generation)
+        self._on_source_generation_changed(generation)
+
+    def _on_source_generation_changed(self, generation: SourceGeneration) -> None:
+        """Allow hardened subclasses to invalidate additional process-local state."""
 
     def __check_translation(self, abbreviation: str) -> None:
         if not self.valid_translation(abbreviation):
