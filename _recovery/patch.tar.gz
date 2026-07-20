@@ -1,0 +1,120 @@
+# AGENTS.md
+
+This file applies to the entire repository.
+
+## Project purpose
+
+GetBible Librarian is the retrieval and Search library used by the independent
+GetBible Query and Search services and standalone Python applications. It must
+remain safe under threaded and multi-process API loads while preserving its
+published successful JSON contracts.
+
+The primary project home is <https://git.vdm.dev/getBible/librarian>. GitHub at
+<https://github.com/getbible/librarian> hosts deployment CI, releases, and PyPI
+publication. Preserve both locations in metadata and documentation.
+
+## Branches and releases
+
+- `master` is the releasable branch.
+- `staging` is the integration branch for completed, tested changes.
+- Do not publish from ordinary branch pushes.
+- Release one frozen `master` SHA through the build-once workflow.
+- Never replace immutable Action SHAs with movable tags.
+- PyPI publication uses the configured trusted publisher and provenance
+  attestations, not a long-lived API token.
+
+## Critical public contracts
+
+- `GetBible.select()` returns the established chapter-keyed dictionary.
+- `GetBible.scripture()` encodes that same structure.
+- `GetBible.search()` returns `query`, `results`, and `matches`.
+- `SearchBible` is the canonical public criteria class.
+- Search `results` preserves the same chapter/verse object structure as
+  `select()`.
+- Additive metadata is allowed. Removing/renaming existing fields requires an
+  explicit compatibility decision and migration documentation.
+- Returned metadata, verses, references, and match lists must remain detached
+  from mutable cache internals.
+- Translation codes are lowercase API identifiers validated with a full match.
+- Query is `GET query.getbible.net/v2/{translation}/{reference}` and calls only
+  `select()`.
+- Search is `GET search.getbible.net/v2/{translation}?q=...` and calls only
+  `search()`.
+- Do not reintroduce a combined route, cross-service capability, public POST, or
+  raw regular-expression search.
+
+## Security and architecture invariants
+
+- Bound and validate references before materializing verse ranges.
+- Run Search preflight before translation loading.
+- Validate missing translations through the bounded negative TTL/LRU cache
+  before persistent Search cache or file-lock work.
+- Preserve finite request, corpus, repository-body, Search-work, response,
+  retry, and timeout ceilings.
+- Verify required full-translation and chapter SHA resources in production.
+- Validate the independent books inventory and every book/chapter/verse before
+  committing a full translation.
+- Keep full payloads content-addressed and advance metadata atomically only after
+  complete validation. Invalid candidates must not replace LKG data.
+- Treat old validation metadata as requiring source revalidation.
+- Preserve immutable corpora and lazy bounded index variants.
+- Preserve deep-copy boundaries for every public result object.
+- Never create a maintenance thread per client.
+- Keep sessions fork-safe and caches bounded; keyed locks must disappear when
+  inactive.
+- Preserve `warm_translation()`, `cache_info()`, `close()`,
+  `source_operation()`, and `refresh_source_generation()` behavior.
+- A local mirror generation is immutable, never reused/reactivated, and changes
+  only after the reader barrier, worker invalidation, and external purge
+  succeed.
+- Keep response-cache lookup, Librarian execution, and insertion inside one
+  source operation.
+- Keep Query and Search process, socket, writable cache, response cache, queue,
+  rate, deadline, memory, task, and log state separate.
+- Keep default tests deterministic and offline.
+
+## Development commands
+
+```bash
+python -m venv .venv
+.venv/bin/python -m pip install -r requirements-dev.txt
+.venv/bin/python -m compileall -q src tests
+.venv/bin/python -m unittest discover -s tests -v
+.venv/bin/ruff check src tests benchmarks scripts examples
+.venv/bin/bandit -q -r src/getbible -x src/getbible/data
+.venv/bin/python -m pip_audit
+.venv/bin/python -m build
+.venv/bin/python -m twine check dist/*
+```
+
+Run live integration deliberately:
+
+```bash
+GETBIBLE_RUN_LIVE_TESTS=1 .venv/bin/python -m unittest \
+  tests.test_getbible tests.test_live_search -v
+```
+
+Run the real endpoint load/failure gate after Search, cache, generation, or
+resource-control changes.
+
+## Test expectations
+
+- Add offline fixture coverage for every new criterion, limit, response field,
+  and typed failure.
+- Test preflight ordering so invalid requests do not reach repository/cache work.
+- Test checksum, complete corpus, content-addressed commit, LKG, and old metadata
+  behavior.
+- Test caller mutation cannot affect later responses.
+- Test generation transitions with readers, callback failure, and identifier
+  reuse.
+- Test concurrent access and bounded cardinality when changing cache or locks.
+- Preserve all historical Unicode and parser cases.
+
+## Release expectations
+
+1. Complete `docs/RELEASE_GATE.md` on the exact candidate.
+2. Run live production-corpus validation and endpoint load/failure testing.
+3. Merge tested changes through `staging` into `master`.
+4. Confirm version and dated changelog.
+5. Freeze the exact `master` SHA in the Release workflow.
+6. Test Python 3.10¶»§q«^

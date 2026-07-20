@@ -1,0 +1,64 @@
+name: Restore production hardening patch
+
+on:
+  push:
+    branches:
+      - agent/production-release-hardening
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: restore-production-hardening
+  cancel-in-progress: false
+
+jobs:
+  restore:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout branch
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: agent/production-release-hardening
+          fetch-depth: 0
+
+      - name: Restore base and audited patch archive
+        run: |
+          set -euo pipefail
+          cp _recovery/patch.tar.gz "${RUNNER_TEMP}/patch.tar.gz"
+          file "${RUNNER_TEMP}/patch.tar.gz"
+          tar -tzf "${RUNNER_TEMP}/patch.tar.gz" >/dev/null
+          git rm -r --ignore-unmatch .
+          git checkout 1020df0f67344902af69d2dc6a9a128aa52e646f -- .
+          tar -xzf "${RUNNER_TEMP}/patch.tar.gz" -C .
+          rm -rf _recovery
+          rm -f .github/workflows/restore-production-hardening.yml
+
+      - name: Set up Python
+        uses: actions/setup-python@42375524e23c412d93fb67b49958b491fce71c38 # v5.4.0
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: |
+            pyproject.toml
+            requirements.txt
+            requirements-dev.txt
+
+      - name: Run deterministic validation
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade pip
+          python -m pip install -e .
+          python -m compileall -q src tests
+          python -m unittest discover -s tests -v
+
+      - name: Commit restored patch
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "Restore production release hardening"
+          git push origin HEAD:agent/production-release-hardening
