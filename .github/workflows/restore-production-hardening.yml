@@ -1,6 +1,9 @@
 name: Restore production hardening patch
 
 on:
+  push:
+    branches:
+      - agent/production-release-hardening
   pull_request:
     branches:
       - master
