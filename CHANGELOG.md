@@ -21,6 +21,8 @@ All notable project changes are documented here.
 - Deterministic `SearchLimits`, response-volume accounting, substring minimums, cooperative deadlines, and pre-execution `SearchBible.expensive` classification.
 - Atomic source-generation manifests, reader/transition barriers, stable external cache namespaces, failure-serialized purge callbacks, and worker cache invalidation.
 - Maintained Query and Search systemd resource-limit drop-ins.
+- A one-command local release gate that bootstraps the development toolchain,
+  mirrors CI checks, and can append the opt-in live API integration suite.
 
 ### Changed
 

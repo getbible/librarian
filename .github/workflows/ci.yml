@@ -87,6 +87,9 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install -r requirements-dev.txt
 
+      - name: Validate local release gate entry point
+        run: bash -n scripts/run_release_gate.sh
+
       - name: Lint
         run: |
           set +e
