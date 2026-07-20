@@ -1,4 +1,4 @@
-name: Inspect production hardening archive
+name: Restore production hardening archive
 
 on:
   pull_request:
@@ -9,10 +9,16 @@ on:
 permissions:
   contents: write
 
+concurrency:
+  group: restore-production-hardening
+  cancel-in-progress: false
+
 jobs:
-  inspect:
+  restore:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 30
+    env:
+      GH_TOKEN: ${{ github.token }}
     steps:
       - name: Checkout branch
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
@@ -20,20 +26,76 @@ jobs:
           ref: agent/production-release-hardening
           fetch-depth: 0
 
-      - name: Record archive format
+      - name: Recover audited patch from repository blobs
         run: |
           set -euo pipefail
-          {
-            file _recovery/patch.tar.gz
-            stat --printf='size=%s\n' _recovery/patch.tar.gz
-            xxd -l 64 -p _recovery/patch.tar.gz
-            printf 'tar_gzip='; if tar -tzf _recovery/patch.tar.gz >/dev/null 2>&1; then echo yes; else echo no; fi
-            printf 'zip='; if unzip -tq _recovery/patch.tar.gz >/dev/null 2>&1; then echo yes; else echo no; fi
-            printf 'tar='; if tar -tf _recovery/patch.tar.gz >/dev/null 2>&1; then echo yes; else echo no; fi
-            printf 'base64='; if base64 --decode _recovery/patch.tar.gz >/tmp/decoded 2>/dev/null; then echo yes; file /tmp/decoded; stat --printf='decoded_size=%s\n' /tmp/decoded; xxd -l 64 -p /tmp/decoded; else echo no; fi
-          } > _recovery/diagnostic.txt
+          archive_b64="${RUNNER_TEMP}/patch.b64"
+          archive="${RUNNER_TEMP}/patch.tar.gz"
+          : > "${archive_b64}"
+          shas=(
+            510fd886f960930c28ff0bdac1ff885e2e67e058
+            facbeda2a6bef61d99e9665293201ba8167cd786
+            349d0281a83619f7da1e1fd473724cc67101b3b9
+            618cabde9a437c5c61b0c98615ef9ea7cb1f577f
+            2ed38913150d3ec6a3de00319e97982c9081c506
+            0f6987c611b1c53c317445238778ca72a9e479b8
+            654c5461cc60e8a31754c17b858f24317fafe5c6
+            0c4de4c8fd95c53971020da73850b300adbeb986
+            7123c82e8b996ac19f476fa1fba7ed6b91258301
+            ac36896f61b2450a8fc46c719549bebab3a42e96
+            8dc0a8274247b077079eec9c83424fe24a3e58a1
+            25b4b07d5c157d84fb6d2674e85f62f4e0d128c1
+            ef7af0e21d1868e7820b9bf0ce2a0d2c34fb807c
+            c13cc2a562a6992e5d1c60c06be0164feffe582d
+            ca70fd3ddfc5f492ce85eb15490ae318f0ae5708
+            0f8b85df5cf6d2c9d2542ec2f57b704c1f1ef78e
+            e360acc499449f6010849d87c262914e334ba684
+            ab676ff5bbe5bc897a3806cfc299ba782480beab
+            bb0f3a25ab7fac47afbaced9753dc44299d8c430
+            8a54629f0e26914b192afb9c4db57dd80a79c9d1
+            b0fb814c67ccfece62a08971ba3b908779dae5ce
+            5f990843d4fd8cf7bf9e46fd090ac65db0b6c5d7
+            c0f60a92f53c1b1354498ebe8b0f279b73017767
+            588c86f7fec04fa87642b4e5a916659c9fcf9c64
+          )
+          for sha in "${shas[@]}"; do
+            gh api "repos/${GITHUB_REPOSITORY}/git/blobs/${sha}" --jq .content \
+              | tr -d '\n' | base64 --decode >> "${archive_b64}"
+          done
+          echo "6e87fd06172b98387d0360200d98b25f300f6ee49b526188b197a23adbec7ae2  ${archive_b64}" | sha256sum -c -
+          base64 --decode "${archive_b64}" > "${archive}"
+          echo "81f9c67205c41b56e623a0965d494a0786784baa8f6fdcc194c049e1cdb1b7c5  ${archive}" | sha256sum -c -
+          tar -tzf "${archive}" >/dev/null
+
+          git rm -r --ignore-unmatch .
+          git checkout 1020df0f67344902af69d2dc6a9a128aa52e646f -- .
+          tar -xzf "${archive}" -C .
+          rm -rf _recovery
+          rm -f .github/workflows/restore-production-hardening.yml
+
+      - name: Set up Python
+        uses: actions/setup-python@42375524e23c412d93fb67b49958b491fce71c38 # v5.4.0
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: |
+            pyproject.toml
+            requirements.txt
+            requirements-dev.txt
+
+      - name: Validate recovered tree
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade pip
+          python -m pip install -e .
+          python -m compileall -q src tests
+          python -m unittest discover -s tests -v
+
+      - name: Commit recovered patch
+        run: |
+          set -euo pipefail
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add _recovery/diagnostic.txt
-          git commit -m "Record hardening archive format"
+          git add -A
+          git commit -m "Restore production release hardening"
           git push origin HEAD:agent/production-release-hardening
