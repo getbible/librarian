@@ -13,7 +13,7 @@ from .exceptions import (
 )
 from .getbible_book_number import GetBibleBookNumber
 from .getbible_reference import BookReference, GetBibleReference
-from .hardened import GetBible, RequestLimits
+from .hardened import GetBible, RequestLimits, SearchLimits
 from .search import SearchBible, SearchCriteria
 
 __all__ = [
@@ -33,6 +33,7 @@ __all__ = [
     "RequestLimits",
     "SearchBible",
     "SearchCriteria",
+    "SearchLimits",
     "SearchValidationError",
     "TranslationNotFoundError",
 ]
