@@ -51,7 +51,12 @@ The artifact can be downloaded and installed in a clean environment before relea
 5. Merge the exact release state into `master`.
 6. Open the GitHub Actions **Release** workflow, choose **Run workflow**, and enter the version without the leading `v`.
 
-The workflow always checks out `master`, requires the entered version to match `pyproject.toml`, and creates the corresponding `v<version>` tag only after tests and package validation pass. It refuses to move an existing tag. Directly pushing a correctly formatted tag remains supported for maintainers who need that route.
+The workflow freezes the current `master` SHA in its preparation job, requires
+the entered version to match `pyproject.toml`, and passes that exact SHA to
+every later job. It creates the corresponding `v<version>` tag only after all
+tests and package validation pass, and refuses to move an existing tag.
+Directly pushing a correctly formatted tag remains supported when the tagged
+commit belongs to `master`.
 
 ## Automated release
 
@@ -59,10 +64,19 @@ The manually triggered release workflow:
 
 1. Checks out the exact `master` release commit.
 2. Verifies the entered version against the package version.
-3. Installs the project development tools and runs deterministic tests.
-4. Builds source and wheel distributions and runs `twine check`.
-5. Creates and pushes the immutable `v<version>` tag.
-6. Publishes with the `PYPI_API_TOKEN` environment secret.
-7. Creates a GitHub release with generated commit notes and both distributions.
+3. Runs the deterministic gate against the frozen commit on Python 3.10–3.14.
+4. Builds source and wheel distributions once, runs `twine check`, installs the
+   wheel in isolation, and creates GitHub build-provenance attestations.
+5. Uploads those exact distributions as the immutable workflow artifact.
+6. Creates and pushes the immutable `v<version>` tag.
+7. Downloads the same artifact and publishes it through PyPI trusted publishing.
+8. Downloads the same artifact again for the GitHub release; no rebuild occurs.
 
-Configure the `pypi` GitHub environment and its `PYPI_API_TOKEN` secret before running a release.
+Configure the `pypi` GitHub environment and add this repository as a trusted
+publisher for the `getbible` project in PyPI. No long-lived PyPI API token is
+read by the workflow. Keep environment protection rules enabled so the OIDC
+publication job receives approval independently of branch write access.
+
+Every third-party Action is pinned to a complete immutable commit SHA. Update
+the SHA and its adjacent version comment together after reviewing the upstream
+release diff.

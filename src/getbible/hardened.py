@@ -14,11 +14,11 @@ from ._keyed_locks import KeyedLockPool
 from .exceptions import (
     ReferenceValidationError,
     RequestLimitError,
-    SearchValidationError,
     TranslationNotFoundError,
 )
 from .getbible import GetBible as _BaseGetBible
-from .search import SearchBible
+from .search import SearchBible, SearchLimits, validate_search_request
+from .source_generation import PurgeCallback, SourceGeneration
 
 
 @dataclass(frozen=True, slots=True)
@@ -71,8 +71,17 @@ class GetBible(_BaseGetBible):
         negative_translation_cache_limit: int = 64,
         negative_translation_ttl: float = 300.0,
         max_response_bytes: int = 128 * 1024 * 1024,
+        require_checksums: bool | None = None,
+        source_purge_callback: PurgeCallback | None = None,
+        search_limits: SearchLimits | None = None,
     ) -> None:
         self.request_limits = request_limits or RequestLimits()
+        if search_limits is None:
+            search_limits = SearchLimits(
+                max_offset=self.request_limits.max_search_offset,
+                max_books=self.request_limits.max_search_books,
+                max_exclusions=self.request_limits.max_search_exclusions,
+            )
         self._negative_translation_cache_limit = self._bounded_integer(
             "negative_translation_cache_limit",
             negative_translation_cache_limit,
@@ -99,6 +108,9 @@ class GetBible(_BaseGetBible):
             search_corpus_limit=search_corpus_limit,
             translation_cache_limit=translation_cache_limit,
             cache_ttl_jitter=cache_ttl_jitter,
+            require_checksums=require_checksums,
+            source_purge_callback=source_purge_callback,
+            search_limits=search_limits,
         )
         self._repository.max_response_bytes = self._bounded_integer(
             "max_response_bytes",
@@ -159,28 +171,29 @@ class GetBible(_BaseGetBible):
         criteria: SearchBible | dict[str, Any] | str | None = None,
     ) -> dict[str, Any]:
         """Search only after cheap input and criteria checks have passed."""
-        if not isinstance(query, str):
-            raise SearchValidationError("Search query must be a string.")
-        stripped_query = query.strip()
-        if not stripped_query:
-            raise SearchValidationError("Search query cannot be empty.")
-        if len(stripped_query) > 500:
-            raise RequestLimitError("Search query cannot exceed 500 characters.")
         parsed = SearchBible.from_value(criteria)
-        if parsed.offset > self.request_limits.max_search_offset:
-            raise RequestLimitError(
-                f"Search offset cannot exceed {self.request_limits.max_search_offset}."
-            )
-        if len(parsed.books) > self.request_limits.max_search_books:
-            raise RequestLimitError(
-                f"Search cannot select more than {self.request_limits.max_search_books} books."
-            )
-        if len(parsed.exclude) > self.request_limits.max_search_exclusions:
-            raise RequestLimitError(
-                "Search cannot contain more than "
-                f"{self.request_limits.max_search_exclusions} exclusions."
-            )
-        return super().search(stripped_query, abbreviation, parsed)
+        stripped_query, *_ = validate_search_request(query, parsed, self.search_limits)
+        code = self._validated_translation_code(abbreviation)
+        if not self.valid_translation(code):
+            raise TranslationNotFoundError(f"Translation ({code}) not found.")
+        return super().search(stripped_query, code, parsed)
+
+    def warm_translation(
+        self,
+        abbreviation: str | None = "kjv",
+        *,
+        case_sensitive: bool = False,
+        diacritics: str = "sensitive",
+    ) -> dict[str, Any]:
+        """Validate availability before any persistent translation-cache work."""
+        code = self._validated_translation_code(abbreviation)
+        if not self.valid_translation(code):
+            raise TranslationNotFoundError(f"Translation ({code}) not found.")
+        return super().warm_translation(
+            code,
+            case_sensitive=case_sensitive,
+            diacritics=diacritics,
+        )
 
     def cache_info(self) -> dict[str, Any]:
         """Return base telemetry plus request and negative-cache limits."""
@@ -197,6 +210,7 @@ class GetBible(_BaseGetBible):
                 "evictions": self._negative_translation_evictions,
             }
         state["request_limits"] = asdict(self.request_limits)
+        state["search_limits"] = self.search_limits.to_dict()
         state["active_translation_validation_locks"] = self._translation_validation_locks.size
         state["repository_max_response_bytes"] = self._repository.max_response_bytes
         return state
@@ -205,6 +219,10 @@ class GetBible(_BaseGetBible):
         with self._missing_translations_guard:
             self._missing_translations.clear()
         super().close()
+
+    def _on_source_generation_changed(self, generation: SourceGeneration) -> None:
+        with self._missing_translations_guard:
+            self._missing_translations.clear()
 
     def _validated_references(self, reference: str, abbreviation: str) -> None:
         if not isinstance(reference, str):

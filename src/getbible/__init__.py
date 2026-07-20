@@ -8,13 +8,16 @@ from .exceptions import (
     RepositoryResponseTooLarge,
     RepositoryTimeoutError,
     RequestLimitError,
+    SearchDeadlineExceeded,
+    SearchLimitError,
     SearchValidationError,
     TranslationNotFoundError,
 )
 from .getbible_book_number import GetBibleBookNumber
 from .getbible_reference import BookReference, GetBibleReference
 from .hardened import GetBible, RequestLimits
-from .search import SearchBible, SearchCriteria
+from .search import SearchBible, SearchCriteria, SearchLimits
+from .source_generation import SourceGeneration
 
 __all__ = [
     "BookReference",
@@ -33,6 +36,10 @@ __all__ = [
     "RequestLimits",
     "SearchBible",
     "SearchCriteria",
+    "SearchDeadlineExceeded",
+    "SearchLimitError",
+    "SearchLimits",
     "SearchValidationError",
+    "SourceGeneration",
     "TranslationNotFoundError",
 ]

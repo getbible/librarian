@@ -43,3 +43,11 @@ class CacheIntegrityError(GetBibleError):
 
 class SearchValidationError(ValueError, GetBibleError):
     """Raised when a search query or its criteria are invalid."""
+
+
+class SearchLimitError(SearchValidationError, RequestLimitError):
+    """Raised before a search can exceed its deterministic resource budget."""
+
+
+class SearchDeadlineExceeded(SearchLimitError, TimeoutError):
+    """Raised when cooperative search execution reaches its deadline."""

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import threading
+import time
 import unicodedata
 from array import array
 from collections import Counter
@@ -13,7 +14,12 @@ from typing import Any, ClassVar
 
 import regex
 
-from .exceptions import CacheIntegrityError, SearchValidationError
+from .exceptions import (
+    CacheIntegrityError,
+    SearchDeadlineExceeded,
+    SearchLimitError,
+    SearchValidationError,
+)
 from .translation_cache import TranslationSnapshot
 
 _WORD_CHARACTER_CLASS = r"\p{L}\p{M}\p{N}"
@@ -23,6 +29,93 @@ _VALID_MATCH = frozenset({"whole_word", "substring"})
 _VALID_SCOPE = frozenset({"bible", "old_testament", "new_testament", "deuterocanon"})
 _VALID_DIACRITICS = frozenset({"sensitive", "insensitive"})
 _VALID_SORT = frozenset({"canonical", "relevance"})
+
+
+@dataclass(frozen=True, slots=True)
+class SearchLimits:
+    """Deterministic per-search work, output, filter, and deadline budgets."""
+
+    max_work_units: int = 50_000_000
+    max_response_bytes: int = 4 * 1024 * 1024
+    max_query_length: int = 500
+    max_query_terms: int = 64
+    min_substring_length: int = 3
+    max_books: int = 83
+    max_exclusions: int = 32
+    max_exclusion_terms: int = 64
+    max_offset: int = 10_000
+    max_limit: int = 1_000
+    deadline_seconds: float = 5.0
+    deadline_check_interval: int = 256
+
+    def __post_init__(self) -> None:
+        integer_fields = (
+            "max_work_units",
+            "max_response_bytes",
+            "max_query_length",
+            "max_query_terms",
+            "min_substring_length",
+            "max_books",
+            "max_exclusions",
+            "max_exclusion_terms",
+            "max_limit",
+            "deadline_check_interval",
+        )
+        for name in integer_fields:
+            value = getattr(self, name)
+            if not isinstance(value, int) or isinstance(value, bool) or value < 1:
+                raise ValueError(f"{name} must be a positive integer.")
+        if (
+            not isinstance(self.max_offset, int)
+            or isinstance(self.max_offset, bool)
+            or self.max_offset < 0
+        ):
+            raise ValueError("max_offset must be a non-negative integer.")
+        if not isinstance(self.deadline_seconds, int | float) or isinstance(
+            self.deadline_seconds, bool
+        ):
+            raise TypeError("deadline_seconds must be numeric.")
+        if not 0.001 <= float(self.deadline_seconds) <= 300.0:
+            raise ValueError("deadline_seconds must be between 0.001 and 300 seconds.")
+
+    def to_dict(self) -> dict[str, int | float]:
+        return {name: getattr(self, name) for name in self.__dataclass_fields__}
+
+
+class SearchBudget:
+    """One request's deterministic work reservation and cooperative deadline."""
+
+    def __init__(self, limits: SearchLimits) -> None:
+        self.limits = limits
+        self.started_at = time.monotonic()
+        self.deadline = self.started_at + float(limits.deadline_seconds)
+        self.work_units = 0
+
+    def reserve(self, units: int) -> None:
+        if not isinstance(units, int) or isinstance(units, bool) or units < 0:
+            raise ValueError("Search work units must be a non-negative integer.")
+        if units > self.limits.max_work_units:
+            raise SearchLimitError(
+                "Search requires "
+                f"{units} work units; the configured maximum is "
+                f"{self.limits.max_work_units}."
+            )
+        self.work_units = max(self.work_units, units)
+        self.check_deadline()
+
+    def checkpoint(self, iteration: int = 0) -> None:
+        if iteration % self.limits.deadline_check_interval == 0:
+            self.check_deadline()
+
+    def check_deadline(self) -> None:
+        if time.monotonic() >= self.deadline:
+            raise SearchDeadlineExceeded(
+                f"Search exceeded its {float(self.limits.deadline_seconds):g}-second deadline."
+            )
+
+    @property
+    def elapsed_seconds(self) -> float:
+        return max(0.0, time.monotonic() - self.started_at)
 
 
 @dataclass(frozen=True, slots=True)
@@ -122,6 +215,20 @@ class SearchBible:
     def with_pagination(self, limit: int, offset: int) -> SearchBible:
         return replace(self, limit=limit, offset=offset)
 
+    @property
+    def expensive(self) -> bool:
+        """Classify strict-rate-tier searches without loading a translation."""
+        return (
+            self.match == "substring"
+            or self.words in {"any", "phrase"}
+            or self.proximity is not None
+            or self.sort == "relevance"
+            or bool(self.exclude)
+            or self.diacritics == "insensitive"
+            or self.offset > 1_000
+            or self.limit > 100
+        )
+
     def to_dict(self) -> dict[str, Any]:
         return {
             "words": self.words,
@@ -208,6 +315,7 @@ class SearchIndex:
     texts: tuple[str, ...]
     postings: dict[str, array]
     document_frequency: dict[str, int]
+    build_work_units: int
 
 
 class TranslationCorpus:
@@ -230,6 +338,11 @@ class TranslationCorpus:
             if key in snapshot.data
         }
         self.records = self._build_records(snapshot.data)
+        # Charge index construction from immutable corpus characteristics so
+        # the budget can reject it before normalization and tokenization begin.
+        self.index_build_work_units = len(self.records) + sum(
+            len(record.text) * 2 for record in self.records
+        )
         self.available_books = frozenset(record.book_nr for record in self.records)
         self.book_names = self._build_book_names(self.records)
         self._variants: dict[tuple[bool, str], SearchIndex] = {}
@@ -269,7 +382,12 @@ class TranslationCorpus:
             "indexes": variants,
         }
 
-    def index(self, case_sensitive: bool, diacritics: str) -> SearchIndex:
+    def index(
+        self,
+        case_sensitive: bool,
+        diacritics: str,
+        budget: SearchBudget | None = None,
+    ) -> SearchIndex:
         key = (case_sensitive, diacritics)
         index = self._variants.get(key)
         if index is None:
@@ -283,6 +401,8 @@ class TranslationCorpus:
                     postings: dict[str, array] = {}
                     document_frequency: dict[str, int] = {}
                     for ordinal, text in enumerate(texts):
+                        if budget is not None:
+                            budget.checkpoint(ordinal)
                         tokens = _TOKEN.findall(text)
                         for token in tokens:
                             postings.setdefault(token, array("I")).append(ordinal)
@@ -292,6 +412,7 @@ class TranslationCorpus:
                         texts=texts,
                         postings=postings,
                         document_frequency=document_frequency,
+                        build_work_units=self.index_build_work_units,
                     )
                     self._variants[key] = index
         return index
@@ -360,6 +481,73 @@ class TranslationCorpus:
         return names
 
 
+def validate_search_request(
+    query: object,
+    criteria: SearchBible,
+    limits: SearchLimits,
+) -> tuple[str, str, tuple[str, ...], tuple[str, ...], tuple[str, ...]]:
+    """Validate all corpus-independent search limits before repository access."""
+    if not isinstance(query, str):
+        raise SearchValidationError("Search query must be a string.")
+    stripped_query = query.strip()
+    if not stripped_query:
+        raise SearchValidationError("Search query cannot be empty.")
+    if len(stripped_query) > limits.max_query_length:
+        raise SearchValidationError(
+            f"Search query cannot exceed {limits.max_query_length} characters."
+        )
+    if criteria.limit > limits.max_limit:
+        raise SearchLimitError(f"Search limit cannot exceed {limits.max_limit}.")
+    if criteria.offset > limits.max_offset:
+        raise SearchLimitError(f"Search offset cannot exceed {limits.max_offset}.")
+    if len(criteria.books) > limits.max_books:
+        raise SearchLimitError(
+            f"Search cannot select more than {limits.max_books} books."
+        )
+    if len(criteria.exclude) > limits.max_exclusions:
+        raise SearchLimitError(
+            f"Search cannot contain more than {limits.max_exclusions} exclusions."
+        )
+
+    normalized_query = normalize_text(
+        stripped_query,
+        criteria.case_sensitive,
+        criteria.diacritics,
+    )
+    query_terms = tuple(_TOKEN.findall(normalized_query))
+    if not query_terms:
+        raise SearchValidationError("Search query must contain letters or numbers.")
+    if len(query_terms) > limits.max_query_terms:
+        raise SearchValidationError(
+            f"Search query cannot exceed {limits.max_query_terms} terms."
+        )
+    if criteria.words != "phrase":
+        query_terms = tuple(dict.fromkeys(query_terms))
+    excluded = tuple(
+        normalize_text(term, criteria.case_sensitive, criteria.diacritics)
+        for term in criteria.exclude
+    )
+    excluded_terms = tuple(token for value in excluded for token in _TOKEN.findall(value))
+    if len(excluded_terms) > limits.max_exclusion_terms:
+        raise SearchLimitError(
+            "Search exclusions cannot contain more than "
+            f"{limits.max_exclusion_terms} terms."
+        )
+    if criteria.match == "substring":
+        searched_values = (
+            (normalized_query,) if criteria.words == "phrase" else query_terms
+        )
+        if any(
+            len(term) < limits.min_substring_length
+            for term in (*searched_values, *excluded_terms)
+        ):
+            raise SearchValidationError(
+                "Substring search terms must contain at least "
+                f"{limits.min_substring_length} characters."
+            )
+    return stripped_query, normalized_query, query_terms, excluded, excluded_terms
+
+
 class SearchEngine:
     """Execute criteria against a loaded translation corpus."""
 
@@ -370,43 +558,43 @@ class SearchEngine:
         self,
         corpus: TranslationCorpus,
         book_number: Callable[[str], int | None],
+        limits: SearchLimits | None = None,
     ) -> None:
         self.corpus = corpus
         self.book_number = book_number
+        self.limits = limits or SearchLimits()
+        self.execution_info: dict[str, int | float | bool] = {}
 
     def search(
         self,
         query: str,
         criteria: SearchBible,
     ) -> tuple[list[SearchHit], int]:
-        if not isinstance(query, str):
-            raise SearchValidationError("Search query must be a string.")
-        query = query.strip()
-        if not query:
-            raise SearchValidationError("Search query cannot be empty.")
-        if len(query) > self.MAX_QUERY_LENGTH:
-            raise SearchValidationError(
-                f"Search query cannot exceed {self.MAX_QUERY_LENGTH} characters."
-            )
-
-        normalized_query = normalize_text(
-            query, criteria.case_sensitive, criteria.diacritics
-        )
-        query_terms = tuple(_TOKEN.findall(normalized_query))
-        if not query_terms:
-            raise SearchValidationError("Search query must contain letters or numbers.")
-        if len(query_terms) > self.MAX_QUERY_TERMS:
-            raise SearchValidationError(
-                f"Search query cannot exceed {self.MAX_QUERY_TERMS} terms."
-            )
-        if criteria.words != "phrase":
-            query_terms = tuple(dict.fromkeys(query_terms))
-        excluded = tuple(
-            normalize_text(term, criteria.case_sensitive, criteria.diacritics)
-            for term in criteria.exclude
+        budget = SearchBudget(self.limits)
+        query, normalized_query, query_terms, excluded, excluded_terms = (
+            validate_search_request(query, criteria, self.limits)
         )
         book_filter = self._book_filter(criteria)
-        index = self.corpus.index(criteria.case_sensitive, criteria.diacritics)
+        budget.reserve(
+            self.corpus.index_build_work_units
+            + len(self.corpus.records)
+            + (criteria.limit * 8)
+        )
+        index = self.corpus.index(
+            criteria.case_sensitive,
+            criteria.diacritics,
+            budget,
+        )
+        budget.reserve(
+            self._estimate_work(
+                index,
+                query_terms,
+                excluded_terms,
+                book_filter,
+                criteria,
+                budget,
+            )
+        )
         if (
             len(query_terms) == 1
             and criteria.match == "whole_word"
@@ -414,18 +602,21 @@ class SearchEngine:
             and criteria.proximity is None
             and criteria.sort == "canonical"
         ):
-            return self._single_term_search(
-                index, query_terms[0], book_filter, criteria
+            result = self._single_term_search(
+                index, query_terms[0], book_filter, criteria, budget
             )
+            self._finish_execution(budget, criteria)
+            return result
 
-        matcher = _Matcher(criteria, normalized_query, query_terms, excluded)
+        matcher = _Matcher(criteria, normalized_query, query_terms, excluded, budget)
         eligible = None
         if book_filter != self.corpus.available_books:
-            eligible = frozenset(
-                record.ordinal
-                for record in self.corpus.records
-                if record.book_nr in book_filter
-            )
+            selected_ordinals: set[int] = set()
+            for ordinal, record in enumerate(self.corpus.records):
+                budget.checkpoint(ordinal)
+                if record.book_nr in book_filter:
+                    selected_ordinals.add(record.ordinal)
+            eligible = frozenset(selected_ordinals)
         matched = matcher.search(index, eligible)
         hits = [
             SearchHit(self.corpus.records[ordinal], score, occurrences, terms)
@@ -435,7 +626,9 @@ class SearchEngine:
         if criteria.sort == "relevance":
             hits.sort(key=lambda hit: (-hit.score, hit.record.ordinal))
         total = len(hits)
-        return hits[criteria.offset:criteria.offset + criteria.limit], total
+        result = hits[criteria.offset:criteria.offset + criteria.limit], total
+        self._finish_execution(budget, criteria)
+        return result
 
     def _single_term_search(
         self,
@@ -443,6 +636,7 @@ class SearchEngine:
         term: str,
         book_filter: frozenset[int],
         criteria: SearchBible,
+        budget: SearchBudget,
     ) -> tuple[list[SearchHit], int]:
         selected: list[SearchHit] = []
         whole_corpus = book_filter == self.corpus.available_books
@@ -450,6 +644,7 @@ class SearchEngine:
         matched_position = 0
         page_end = criteria.offset + criteria.limit
         for ordinal, occurrences_group in groupby(index.postings.get(term, ())):
+            budget.checkpoint(matched_position)
             occurrences = sum(1 for _ in occurrences_group)
             record = self.corpus.records[ordinal]
             if record.book_nr not in book_filter:
@@ -469,6 +664,50 @@ class SearchEngine:
         if not whole_corpus:
             total = matched_position
         return selected, total
+
+    def _estimate_work(
+        self,
+        index: SearchIndex,
+        query_terms: tuple[str, ...],
+        excluded_terms: tuple[str, ...],
+        book_filter: frozenset[int],
+        criteria: SearchBible,
+        budget: SearchBudget,
+    ) -> int:
+        terms = (*query_terms, *excluded_terms)
+        units = index.build_work_units
+        if book_filter != self.corpus.available_books:
+            units += len(self.corpus.records)
+
+        if criteria.match == "substring":
+            for position, (token, ordinals) in enumerate(index.postings.items()):
+                budget.checkpoint(position)
+                for term in terms:
+                    units += 1 + min(len(token), len(term))
+                    if term in token:
+                        units += len(ordinals)
+            if criteria.words == "phrase":
+                units += sum(len(text) for text in index.texts)
+        else:
+            units += sum(len(index.postings.get(term, ())) for term in terms)
+            if criteria.words == "phrase":
+                units += sum(len(index.postings.get(term, ())) for term in query_terms)
+
+        if criteria.proximity is not None:
+            units += len(self.corpus.records) * max(1, len(query_terms))
+        if criteria.sort == "relevance":
+            units += len(self.corpus.records) * max(1, len(self.corpus.records).bit_length())
+        units += criteria.limit * 8
+        return units
+
+    def _finish_execution(self, budget: SearchBudget, criteria: SearchBible) -> None:
+        budget.check_deadline()
+        self.execution_info = {
+            "work_units": budget.work_units,
+            "deadline_seconds": float(self.limits.deadline_seconds),
+            "elapsed_seconds": budget.elapsed_seconds,
+            "expensive": criteria.expensive,
+        }
 
     def _book_filter(self, criteria: SearchBible) -> frozenset[int]:
         if criteria.scope == "old_testament":
@@ -493,11 +732,13 @@ class _Matcher:
         query: str,
         terms: tuple[str, ...],
         excluded: tuple[str, ...],
+        budget: SearchBudget,
     ) -> None:
         self.criteria = criteria
         self.query = query
         self.terms = terms
         self.excluded = excluded
+        self.budget = budget
         self.excluded_tokens = tuple(
             dict.fromkeys(
                 token for value in excluded for token in _TOKEN.findall(value)
@@ -516,15 +757,17 @@ class _Matcher:
             matches = self._word_matches(index, eligible)
 
         excluded = self._excluded_ordinals(index)
-        for ordinal in excluded:
+        for position, ordinal in enumerate(excluded):
+            self.budget.checkpoint(position)
             matches.pop(ordinal, None)
 
         if self.criteria.proximity is not None:
-            matches = {
-                ordinal: match
-                for ordinal, match in matches.items()
-                if self._within_proximity(index.texts[ordinal])
-            }
+            nearby: dict[int, tuple[int, int, tuple[str, ...]]] = {}
+            for position, (ordinal, match) in enumerate(matches.items()):
+                self.budget.checkpoint(position)
+                if self._within_proximity(index.texts[ordinal]):
+                    nearby[ordinal] = match
+            matches = nearby
         return matches
 
     def _phrase_matches(
@@ -543,7 +786,8 @@ class _Matcher:
                 candidates.intersection_update(eligible)
 
         matches: dict[int, tuple[int, int, tuple[str, ...]]] = {}
-        for ordinal in candidates:
+        for position, ordinal in enumerate(candidates):
+            self.budget.checkpoint(position)
             text = index.texts[ordinal]
             occurrences = (
                 text.count(self.query)
@@ -572,7 +816,8 @@ class _Matcher:
             candidates.intersection_update(eligible)
 
         matches: dict[int, tuple[int, int, tuple[str, ...]]] = {}
-        for ordinal in candidates:
+        for position, ordinal in enumerate(candidates):
+            self.budget.checkpoint(position)
             counts = tuple(values.get(ordinal, 0) for values in per_term)
             terms = tuple(
                 term
@@ -587,14 +832,16 @@ class _Matcher:
         if self.criteria.match == "whole_word":
             return Counter(index.postings.get(term, ()))
         counts: Counter[int] = Counter()
-        for token, ordinals in index.postings.items():
+        for position, (token, ordinals) in enumerate(index.postings.items()):
+            self.budget.checkpoint(position)
             if term in token:
                 counts.update(ordinals)
         return counts
 
     def _excluded_ordinals(self, index: SearchIndex) -> set[int]:
         excluded: set[int] = set()
-        for term in self.excluded_tokens:
+        for position, term in enumerate(self.excluded_tokens):
+            self.budget.checkpoint(position)
             excluded.update(self._posting_counts(index, term))
         return excluded
 
@@ -608,6 +855,7 @@ class _Matcher:
         satisfied = 0
         required = len(wanted)
         for right, token in enumerate(positions):
+            self.budget.checkpoint(right)
             if token in wanted:
                 counts[token] = counts.get(token, 0) + 1
                 if counts[token] == wanted[token]:

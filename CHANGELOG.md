@@ -18,6 +18,9 @@ All notable project changes are documented here.
 - Typed reference, work-budget, translation, timeout, and oversized-response exceptions.
 - Request-level reference, verse, search-pagination, and response-body budgets.
 - Bounded negative translation caching and parser fuzz/regression coverage.
+- Deterministic `SearchLimits`, response-volume accounting, substring minimums, cooperative deadlines, and pre-execution `SearchBible.expensive` classification.
+- Atomic source-generation manifests, reader/transition barriers, stable external cache namespaces, failure-serialized purge callbacks, and worker cache invalidation.
+- Maintained Query and Search systemd resource-limit drop-ins.
 
 ### Changed
 
@@ -34,6 +37,8 @@ All notable project changes are documented here.
 - Replaced permanently retained keyed locks with reference-counted per-resource coordination.
 - Repository downloads now stream into a finite byte budget and validate path, timeout, retry, and backoff configuration.
 - CI now compiles every source file and runs static security and dependency-advisory scans without removing any existing test or package checks.
+- Full translations now use validation-versioned, content-addressed immutable payloads with atomic metadata commits and independent books-index validation.
+- Release publication now freezes one `master` commit, gates Python 3.10–3.14, builds once, attests the distributions, and uses PyPI trusted publishing.
 
 ### Fixed
 
@@ -44,6 +49,9 @@ All notable project changes are documented here.
 - Verse ranges are bounded before `range()` is materialized, closing a remote memory-exhaustion path.
 - Reversed and malformed ranges fail closed instead of returning a different verse.
 - Cached `BookReference.verses` lists can no longer be mutated by callers.
+- Search and warm-up now reject missing translations through the bounded negative cache before entering abbreviation-specific translation payload or lock paths.
+- Full-translation and chapter SHA enforcement, complete nested validation, and last-known-good preservation now cover malformed upstream refreshes.
+- Returned Query and Search verses and metadata are deep copies independent of every internal cache.
 
 ## [1.1.2] - 2023-12-11
 

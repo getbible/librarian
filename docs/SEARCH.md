@@ -24,6 +24,11 @@ encoded = bible.search_json("faith hope", "kjv")
 
 `SearchBible` is the canonical public class name. `SearchCriteria` remains available as a compatibility alias for integrations that adopted the earlier development name.
 
+`SearchBible.expensive` is available immediately after parsing, before a
+translation is loaded. Public endpoints should use it to select the strict
+rate tier. It is true for substring, phrase, any-word, proximity, relevance,
+exclusion, insensitive-diacritic, deep-offset, and large-page criteria.
+
 | Field | Values | Default |
 |---|---|---|
 | `words` | `all`, `any`, `phrase` | `all` |
@@ -139,6 +144,10 @@ query
   returned
   has_more
   cache
+  cost
+    work_units
+    deadline_seconds
+    expensive
 results
   <translation>_<book>_<chapter>
     translation metadata
@@ -160,6 +169,13 @@ matches
 `matches` preserves global search order. This is especially important for relevance sorting because `results` groups verses by chapter.
 
 The `sha` field identifies the exact full-translation payload used for the search, enabling downstream response-cache invalidation.
+
+`cost.work_units` is the deterministic estimate enforced by
+`SearchLimits.max_work_units`; it is suitable for aggregate metrics but is not
+wall-clock time. `deadline_seconds` reports the cooperative library deadline,
+and `expensive` mirrors the pre-execution rate-tier classification. The exact
+serialized response size is enforced internally but is not echoed because a
+size field would itself change the serialized size.
 
 ## Legacy criteria notation
 
