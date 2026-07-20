@@ -3,6 +3,8 @@ name: Inspect hardening archive blobs
 on:
   push:
     branches: [agent/production-release-hardening]
+  pull_request:
+    branches: [master]
   workflow_dispatch:
 
 permissions:
