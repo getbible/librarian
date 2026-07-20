@@ -30,12 +30,37 @@ jobs:
       - name: Restore base and audited patch archive
         run: |
           set -euo pipefail
-          cp _recovery/patch.tar.gz "${RUNNER_TEMP}/patch.tar.gz"
-          file "${RUNNER_TEMP}/patch.tar.gz"
-          tar -tzf "${RUNNER_TEMP}/patch.tar.gz" >/dev/null
+          archive="${RUNNER_TEMP}/patch.archive"
+          decoded="${RUNNER_TEMP}/patch.decoded"
+          cp _recovery/patch.tar.gz "${archive}"
+          file "${archive}"
+
+          extract_archive() {
+            local input="$1"
+            if tar -tzf "${input}" >/dev/null 2>&1; then
+              tar -xzf "${input}" -C .
+              return 0
+            fi
+            if unzip -tq "${input}" >/dev/null 2>&1; then
+              unzip -oq "${input}" -d .
+              return 0
+            fi
+            if tar -tf "${input}" >/dev/null 2>&1; then
+              tar -xf "${input}" -C .
+              return 0
+            fi
+            return 1
+          }
+
           git rm -r --ignore-unmatch .
           git checkout 1020df0f67344902af69d2dc6a9a128aa52e646f -- .
-          tar -xzf "${RUNNER_TEMP}/patch.tar.gz" -C .
+
+          if ! extract_archive "${archive}"; then
+            base64 --decode "${archive}" > "${decoded}"
+            file "${decoded}"
+            extract_archive "${decoded}"
+          fi
+
           rm -rf _recovery
           rm -f .github/workflows/restore-production-hardening.yml
 
