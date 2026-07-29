@@ -78,6 +78,14 @@ Search responses contain three top-level objects:
 
 This keeps existing scripture templates reusable. With relevance sorting, `matches` is the authoritative cross-chapter order.
 
+Substring search is script-aware. One- and two-character terms remain blocked
+for Latin and other normally space-delimited scripts, while meaningful short
+terms are supported for Han, Japanese kana, Hangul, and Unicode
+complex-context scripts such as Thai, Lao, Khmer, and Myanmar. Arabic, Hebrew,
+Devanagari, Greek, Cyrillic, and other space-delimited scripts retain Unicode
+whole-word behavior. See [Scripture search](docs/SEARCH.md) for the matching
+policy and shared continuous-writing-script detector.
+
 Search criteria may also be supplied as a JSON-decoded dictionary:
 
 ```python
