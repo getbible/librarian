@@ -103,11 +103,50 @@ Whole-word matching uses Unicode letter, combining-mark, and number boundaries. 
 
 Substring matching searches inside normalized tokens. For example, `great` can match `greatest`.
 
+The distinction remains explicit and deterministic: Librarian never silently
+rewrites a requested `whole_word` search. For languages that do not reliably
+separate words with spaces, applications should select `substring`.
+
+Librarian permits one- and two-grapheme substring terms only when the complete
+term uses Han, Japanese kana, Hangul, or a Unicode complex-context script such
+as Thai, Lao, Khmer, or Myanmar. The configured minimum remains in force for
+Latin, Arabic, Hebrew, Devanagari, Greek, Cyrillic, and other normally
+space-delimited scripts. Mixed short tokens such as `a神` are rejected.
+
+Applications can share Librarian's Unicode-property detector instead of
+maintaining character ranges:
+
+```python
+from getbible import requires_substring_matching
+
+
+match = (
+    "substring"
+    if requires_substring_matching(query)
+    else "whole_word"
+)
+```
+
+Use that automatic choice only when the caller has not explicitly selected a
+match mode. For a query mixing continuous-writing and space-delimited terms,
+keep the choice explicit: applying substring matching to the entire query also
+allows partial matches for its Latin or other space-delimited terms.
+
+Substring occurrence counts and relevance scores include every non-overlapping
+occurrence inside a token. Join controls (ZWNJ and ZWJ) remain part of the
+surrounding Arabic-script or Indic token instead of creating false word
+boundaries.
+
 ## Case and diacritics
 
 Case-insensitive matching uses Unicode `casefold()`. Original verse text is never modified in the response.
 
 Diacritic-insensitive matching decomposes Unicode characters and removes combining marks from the search index. This can make `Cafe` match `Café` and can ignore Hebrew vowel marks. It does not perform transliteration.
+
+This option is never enabled automatically. Some scripts, including
+Devanagari and Southeast Asian scripts, use combining marks structurally, so
+callers should request insensitive matching only when it is appropriate for
+the selected translation.
 
 ## Testament and book scopes
 
@@ -136,6 +175,7 @@ Canonical ordering follows API book, chapter, and verse order. Relevance orderin
 query
   text
   criteria
+  engine_version
   translation
   sha
   total
@@ -169,6 +209,12 @@ matches
 `matches` preserves global search order. This is especially important for relevance sorting because `results` groups verses by chapter.
 
 The `sha` field identifies the exact full-translation payload used for the search, enabling downstream response-cache invalidation.
+
+`engine_version` identifies result-affecting search semantics independently of
+the translation SHA. Search response caches should include both values in
+their namespace and must be flushed when upgrading from an implementation that
+did not include the engine version. `SEARCH_ENGINE_VERSION` exports the same
+integer for cache-key construction before a search executes.
 
 `cost.work_units` is the deterministic estimate enforced by
 `SearchLimits.max_work_units`; it is suitable for aggregate metrics but is not

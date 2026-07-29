@@ -22,13 +22,37 @@ from .exceptions import (
 )
 from .translation_cache import TranslationSnapshot
 
-_WORD_CHARACTER_CLASS = r"\p{L}\p{M}\p{N}"
-_TOKEN = regex.compile(rf"[{_WORD_CHARACTER_CLASS}]+(?:['’][{_WORD_CHARACTER_CLASS}]+)*")
+_WORD_START_CHARACTER_CLASS = r"\p{L}\p{N}"
+_WORD_CHARACTER_CLASS = rf"{_WORD_START_CHARACTER_CLASS}\p{{M}}\u200C\u200D"
+_TOKEN = regex.compile(
+    rf"[{_WORD_START_CHARACTER_CLASS}][{_WORD_CHARACTER_CLASS}]*"
+    rf"(?:['’][{_WORD_START_CHARACTER_CLASS}][{_WORD_CHARACTER_CLASS}]*)*"
+)
+_GRAPHEME = regex.compile(r"\X")
+_CONTINUOUS_WRITING_SCRIPT_CLASS = (
+    r"\p{Script_Extensions=Han}"
+    r"\p{Script_Extensions=Hiragana}"
+    r"\p{Script_Extensions=Katakana}"
+    r"\p{Line_Break=Complex_Context}"
+)
+_SHORT_SUBSTRING_SCRIPT_CLASS = (
+    _CONTINUOUS_WRITING_SCRIPT_CLASS + r"\p{Script_Extensions=Hangul}"
+)
+_CONTINUOUS_WRITING_SCRIPT = regex.compile(
+    rf"[{_CONTINUOUS_WRITING_SCRIPT_CLASS}]"
+)
+_SHORT_SUBSTRING_TERM = regex.compile(
+    rf"(?V1)\A"
+    rf"(?=[{_WORD_CHARACTER_CLASS}]*[{_SHORT_SUBSTRING_SCRIPT_CLASS}])"
+    rf"[{_SHORT_SUBSTRING_SCRIPT_CLASS}\p{{M}}\p{{N}}\u200C\u200D]+"
+    rf"\Z"
+)
 _VALID_WORDS = frozenset({"all", "any", "phrase"})
 _VALID_MATCH = frozenset({"whole_word", "substring"})
 _VALID_SCOPE = frozenset({"bible", "old_testament", "new_testament", "deuterocanon"})
 _VALID_DIACRITICS = frozenset({"sensitive", "insensitive"})
 _VALID_SORT = frozenset({"canonical", "relevance"})
+SEARCH_ENGINE_VERSION = 2
 
 
 @dataclass(frozen=True, slots=True)
@@ -41,7 +65,11 @@ class SearchLimits:
     max_query_terms: int = 64
     min_substring_length: int = 3
     max_books: int = 83
+    max_book_length: int = 256
+    max_books_length: int = 4_096
     max_exclusions: int = 32
+    max_exclusion_length: int = 500
+    max_exclusions_length: int = 4_000
     max_exclusion_terms: int = 64
     max_offset: int = 10_000
     max_limit: int = 1_000
@@ -56,7 +84,11 @@ class SearchLimits:
             "max_query_terms",
             "min_substring_length",
             "max_books",
+            "max_book_length",
+            "max_books_length",
             "max_exclusions",
+            "max_exclusion_length",
+            "max_exclusions_length",
             "max_exclusion_terms",
             "max_limit",
             "deadline_check_interval",
@@ -504,9 +536,29 @@ def validate_search_request(
         raise SearchLimitError(
             f"Search cannot select more than {limits.max_books} books."
         )
+    book_names = tuple(book for book in criteria.books if isinstance(book, str))
+    if any(len(book) > limits.max_book_length for book in book_names):
+        raise SearchLimitError(
+            f"Search book names cannot exceed {limits.max_book_length} characters."
+        )
+    if sum(map(len, book_names)) > limits.max_books_length:
+        raise SearchLimitError(
+            "Search book names cannot contain more than "
+            f"{limits.max_books_length} characters in total."
+        )
     if len(criteria.exclude) > limits.max_exclusions:
         raise SearchLimitError(
             f"Search cannot contain more than {limits.max_exclusions} exclusions."
+        )
+    if any(len(term) > limits.max_exclusion_length for term in criteria.exclude):
+        raise SearchLimitError(
+            "Search exclusions cannot exceed "
+            f"{limits.max_exclusion_length} characters each."
+        )
+    if sum(map(len, criteria.exclude)) > limits.max_exclusions_length:
+        raise SearchLimitError(
+            "Search exclusions cannot contain more than "
+            f"{limits.max_exclusions_length} characters in total."
         )
 
     normalized_query = normalize_text(
@@ -533,18 +585,16 @@ def validate_search_request(
             "Search exclusions cannot contain more than "
             f"{limits.max_exclusion_terms} terms."
         )
-    if criteria.match == "substring":
-        searched_values = (
-            (normalized_query,) if criteria.words == "phrase" else query_terms
+    if criteria.match == "substring" and any(
+        len(_GRAPHEME.findall(term)) < limits.min_substring_length
+        and not allows_short_substring(term)
+        for term in (*query_terms, *excluded_terms)
+    ):
+        raise SearchValidationError(
+            "Substring search terms must contain at least "
+            f"{limits.min_substring_length} characters unless they use a "
+            "supported continuous-writing script."
         )
-        if any(
-            len(term) < limits.min_substring_length
-            for term in (*searched_values, *excluded_terms)
-        ):
-            raise SearchValidationError(
-                "Substring search terms must contain at least "
-                f"{limits.min_substring_length} characters."
-            )
     return stripped_query, normalized_query, query_terms, excluded, excluded_terms
 
 
@@ -683,9 +733,12 @@ class SearchEngine:
             for position, (token, ordinals) in enumerate(index.postings.items()):
                 budget.checkpoint(position)
                 for term in terms:
-                    units += 1 + min(len(token), len(term))
-                    if term in token:
-                        units += len(ordinals)
+                    occurrences = token.count(term)
+                    units += 1 + len(token)
+                    if occurrences:
+                        units += len(ordinals) * occurrences
+                    if units > budget.limits.max_work_units:
+                        budget.reserve(units)
             if criteria.words == "phrase":
                 units += sum(len(text) for text in index.texts)
         else:
@@ -703,6 +756,7 @@ class SearchEngine:
     def _finish_execution(self, budget: SearchBudget, criteria: SearchBible) -> None:
         budget.check_deadline()
         self.execution_info = {
+            "engine_version": SEARCH_ENGINE_VERSION,
             "work_units": budget.work_units,
             "deadline_seconds": float(self.limits.deadline_seconds),
             "elapsed_seconds": budget.elapsed_seconds,
@@ -834,8 +888,10 @@ class _Matcher:
         counts: Counter[int] = Counter()
         for position, (token, ordinals) in enumerate(index.postings.items()):
             self.budget.checkpoint(position)
-            if term in token:
-                counts.update(ordinals)
+            occurrences = token.count(term)
+            if occurrences:
+                for ordinal in ordinals:
+                    counts[ordinal] += occurrences
         return counts
 
     def _excluded_ordinals(self, index: SearchIndex) -> set[int]:
@@ -891,6 +947,31 @@ def normalize_text(text: str, case_sensitive: bool, diacritics: str) -> str:
         )
         value = unicodedata.normalize("NFC", value)
     return value if case_sensitive else value.casefold()
+
+
+def allows_short_substring(term: str) -> bool:
+    """Return whether a term uses scripts where short units carry word meaning.
+
+    Han, Japanese kana, Hangul, and Unicode complex-context scripts cannot
+    always rely on spaces to delimit every searchable unit. Restricting these
+    terms to the global substring minimum would reject ordinary one- or
+    two-character searches. Mixed Latin/script tokens stay subject to the
+    global minimum.
+    """
+    return bool(_SHORT_SUBSTRING_TERM.fullmatch(term))
+
+
+def requires_substring_matching(query: str) -> bool:
+    """Return whether a query contains text without reliable space boundaries.
+
+    Applications that provide a search-engine-style default can use this
+    helper to convert ``whole_word`` to ``substring`` without maintaining
+    their own incomplete script detector. Explicit Librarian match modes
+    remain deterministic and are never silently rewritten.
+    """
+    if not isinstance(query, str):
+        raise TypeError("query must be a string.")
+    return bool(_CONTINUOUS_WRITING_SCRIPT.search(query))
 
 
 def normalize_book_name(name: str) -> str:

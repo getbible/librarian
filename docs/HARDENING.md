@@ -21,7 +21,11 @@ bible = GetBible(
         max_query_terms=64,
         min_substring_length=3,
         max_books=83,
+        max_book_length=256,
+        max_books_length=4_096,
         max_exclusions=32,
+        max_exclusion_length=500,
+        max_exclusions_length=4_000,
         max_exclusion_terms=64,
         max_offset=10_000,
         max_limit=1_000,
@@ -42,8 +46,16 @@ building an index, scanning postings, testing phrases, and evaluating
 proximity. The response is serialized into the configured byte budget before
 it is returned.
 
-Substring terms must contain at least three characters by default. This stops
-one-character vocabulary scans before the translation corpus is loaded.
+Substring terms must contain at least three extended grapheme clusters by
+default. This stops one-character vocabulary scans before the translation
+corpus is loaded. Script-tailored exceptions permit meaningful short Han,
+Japanese kana, Hangul, and Unicode complex-context terms while retaining the
+minimum for Latin and normally space-delimited scripts. Punctuation and
+combining marks cannot pad a short term past the limit.
+
+Book-name and exclusion filters have both per-item and aggregate character
+budgets. These checks run before repository access and prevent oversized
+criteria from consuming normalization work or being echoed into a response.
 `SearchBible.expensive` classifies substring, phrase, any-word, proximity,
 relevance, exclusion, insensitive-diacritic, deep-offset, and large-page
 criteria before execution so the HTTP layer can apply its strict rate tier.

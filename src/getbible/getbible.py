@@ -456,6 +456,7 @@ class GetBible:
             "query": {
                 "text": query,
                 "criteria": criteria.to_dict(),
+                "engine_version": execution_info["engine_version"],
                 "translation": deepcopy(corpus.translation_metadata),
                 "sha": corpus.sha,
                 "total": total,

@@ -89,6 +89,9 @@ the package's `dev` extra, before invoking the manual commands.
 - repository traversal is rejected;
 - blank and excessive search inputs fail before translation loading;
 - substring, deterministic work, output-volume, filter, and cooperative deadline budgets fail closed;
+- short continuous-writing-script searches remain bounded while short Latin and other segmented-script substrings fail before repository access;
+- punctuation, combining marks, oversized exclusions, and oversized book filters cannot bypass pre-execution limits;
+- multilingual fixtures cover Han, kana, Hangul, Arabic, Hebrew, Devanagari, Thai, Lao, Khmer, Myanmar, and Unicode join controls;
 - full corpora and independent books indexes are completely validated before a versioned content-addressed payload is committed;
 - production full-translation and chapter checksums are required and compared;
 - invalid upstream refreshes preserve the last-known-good corpus;
