@@ -87,6 +87,26 @@ with limiter.reserve(caller_identity, tier=rate_tier):
     response = bible.search(query, translation, criteria)
 ```
 
+If the public service offers an automatic match choice, apply it only when the
+request omitted `match`:
+
+```python
+from getbible import requires_substring_matching
+
+
+if (
+    "match" not in validated_filter_values
+    and requires_substring_matching(query)
+):
+    validated_filter_values["match"] = "substring"
+```
+
+The helper uses Unicode Script Extensions and Complex Context line-breaking
+properties. It selects continuous-writing scripts such as Han, Japanese,
+Thai, Lao, Khmer, and Myanmar without incorrectly classifying Arabic, Hebrew,
+Devanagari, or Hangul as unsegmented. An explicitly supplied match mode must
+remain authoritative.
+
 Do not pass raw query values through Python truthiness (`bool("false")` is
 `True`), silently ignore unknown filters, or expose regular expressions.
 
@@ -136,6 +156,11 @@ The search response `query.sha` identifies the exact translation payload and
 text by default; application and reverse-proxy access logs should retain
 request identifiers, lengths, counts, status, and timing without recording the
 query string.
+
+Include `query.engine_version` with `query.sha` in response-cache namespaces.
+Use the exported `SEARCH_ENGINE_VERSION` constant while constructing a cache
+key before executing a search. The translation SHA alone cannot invalidate
+cached totals when search tokenization or matching semantics change.
 
 For a shared Redis, Memcached, filesystem, or proxy response cache, wrap the
 entire lookup/call/write transaction in `source_operation()` and prefix the key

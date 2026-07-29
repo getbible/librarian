@@ -2,7 +2,34 @@
 
 All notable project changes are documented here.
 
-## [1.2.0] - Unreleased
+## [1.2.1] - Unreleased
+
+### Added
+
+- Deterministic multilingual search fixtures for Simplified and Traditional
+  Chinese, Japanese, Korean, Arabic, Hebrew, Devanagari, Thai, Lao, Khmer,
+  Myanmar, Persian join controls, and mixed-script queries.
+- `requires_substring_matching()` as the shared Unicode-property detector for
+  applications that offer automatic matching for continuous-writing scripts.
+- Search response `engine_version` metadata and the matching
+  `SEARCH_ENGINE_VERSION` constant for result-cache invalidation when matching
+  semantics change without a translation SHA change.
+- Per-item and aggregate character budgets for book-name and exclusion
+  filters.
+
+### Fixed
+
+- Short substring searches now accept meaningful Han, kana, Hangul, and
+  Unicode complex-context terms without lowering the global Latin/segmented
+  script minimum.
+- Substring matches now report every non-overlapping occurrence inside one
+  uninterrupted token and charge that work conservatively.
+- Grapheme-aware validation prevents punctuation and combining marks from
+  padding undersized substring terms.
+- ZWNJ and ZWJ no longer split otherwise continuous Arabic-script and Indic
+  words.
+
+## [1.2.0] - 2026-07-20
 
 ### Added
 

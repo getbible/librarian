@@ -1,0 +1,156 @@
+{
+  "translation": "Multilingual Search Test Translation",
+  "abbreviation": "multi",
+  "description": "Deterministic offline fixture for multilingual Unicode search tests.",
+  "lang": "mul",
+  "language": "Multilingual",
+  "direction": "LTR",
+  "encoding": "UTF-8",
+  "distribution_license": "Test data only",
+  "books": [
+    {
+      "nr": 1,
+      "name": "Multilingual",
+      "chapters": [
+        {
+          "chapter": 1,
+          "name": "Multilingual 1",
+          "verses": [
+            {
+              "chapter": 1,
+              "verse": 1,
+              "name": "Multilingual 1:1",
+              "text": "起初，神创造天地；神爱世人。"
+            },
+            {
+              "chapter": 1,
+              "verse": 2,
+              "name": "Multilingual 1:2",
+              "text": "神爱世人，也赐下永生。"
+            },
+            {
+              "chapter": 1,
+              "verse": 3,
+              "name": "Multilingual 1:3",
+              "text": "起初，神創造天地；神愛世人。"
+            },
+            {
+              "chapter": 1,
+              "verse": 4,
+              "name": "Multilingual 1:4",
+              "text": "初めに、神は天と地を創造された。神は世を愛された。"
+            },
+            {
+              "chapter": 1,
+              "verse": 5,
+              "name": "Multilingual 1:5",
+              "text": "태초에 하나님이 천지를 창조하시니라. 하나님이 세상을 사랑하셨다."
+            },
+            {
+              "chapter": 1,
+              "verse": 6,
+              "name": "Multilingual 1:6",
+              "text": "فِي الْبَدْءِ خَلَقَ اللهُ السَّمَاوَاتِ وَالأَرْضَ."
+            },
+            {
+              "chapter": 1,
+              "verse": 7,
+              "name": "Multilingual 1:7",
+              "text": "في البدء كانت الكلمة، ثم الكلمة كانت عند الله."
+            },
+            {
+              "chapter": 1,
+              "verse": 8,
+              "name": "Multilingual 1:8",
+              "text": "بِالْبَدْءِ إله واحد."
+            },
+            {
+              "chapter": 1,
+              "verse": 9,
+              "name": "Multilingual 1:9",
+              "text": "בְּרֵאשִׁית בָּרָא אֱלֹהִים אֵת הַשָּׁמַיִם וְאֵת הָאָרֶץ׃"
+            },
+            {
+              "chapter": 1,
+              "verse": 10,
+              "name": "Multilingual 1:10",
+              "text": "בראשית ברא אלהים את השמים ואת הארץ."
+            },
+            {
+              "chapter": 1,
+              "verse": 11,
+              "name": "Multilingual 1:11",
+              "text": "आदि में परमेश्वर ने आकाश और पृथ्वी की सृष्टि की।"
+            },
+            {
+              "chapter": 1,
+              "verse": 12,
+              "name": "Multilingual 1:12",
+              "text": "यीशु ने कहा, क़ानून और सत्य स्थिर हैं।"
+            },
+            {
+              "chapter": 1,
+              "verse": 13,
+              "name": "Multilingual 1:13",
+              "text": "ในปฐมกาลพระเจ้าทรงเนรมิตสร้างฟ้าและแผ่นดิน"
+            },
+            {
+              "chapter": 1,
+              "verse": 14,
+              "name": "Multilingual 1:14",
+              "text": "เพราะว่าพระเจ้าทรงรักโลกและประทานชีวิตนิรันดร์"
+            },
+            {
+              "chapter": 1,
+              "verse": 15,
+              "name": "Multilingual 1:15",
+              "text": "Jesus—耶稣—イエス—예수 ประกาศข่าวดี."
+            },
+            {
+              "chapter": 1,
+              "verse": 16,
+              "name": "Multilingual 1:16",
+              "text": "ໃນຕອນເລີ່ມຕົ້ນ ພຣະເຈົ້າຊົງສ້າງຟ້າແລະແຜ່ນດິນ."
+            },
+            {
+              "chapter": 1,
+              "verse": 17,
+              "name": "Multilingual 1:17",
+              "text": "កាលដើមដំបូង ព្រះបានបង្កើតផ្ទៃមេឃ និងផែនដី។"
+            },
+            {
+              "chapter": 1,
+              "verse": 18,
+              "name": "Multilingual 1:18",
+              "text": "အစအဦး၌ ဘုရားသခင်သည် ကောင်းကင်နှင့် မြေကြီးကို ဖန်ဆင်းတော်မူ၏။"
+            },
+            {
+              "chapter": 1,
+              "verse": 19,
+              "name": "Multilingual 1:19",
+              "text": "神神创造神。"
+            },
+            {
+              "chapter": 1,
+              "verse": 20,
+              "name": "Multilingual 1:20",
+              "text": "アーメン、主をほめたたえよ。"
+            },
+            {
+              "chapter": 1,
+              "verse": 21,
+              "name": "Multilingual 1:21",
+              "text": "در آغاز خدا می‌رود و راه را می‌گشاید."
+            },
+            {
+              "chapter": 1,
+              "verse": 22,
+              "name": "Multilingual 1:22",
+              "text": "क्‍ष सत्य है।"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

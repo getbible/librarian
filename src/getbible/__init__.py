@@ -16,7 +16,13 @@ from .exceptions import (
 from .getbible_book_number import GetBibleBookNumber
 from .getbible_reference import BookReference, GetBibleReference
 from .hardened import GetBible, RequestLimits
-from .search import SearchBible, SearchCriteria, SearchLimits
+from .search import (
+    SEARCH_ENGINE_VERSION,
+    SearchBible,
+    SearchCriteria,
+    SearchLimits,
+    requires_substring_matching,
+)
 from .source_generation import SourceGeneration
 
 __all__ = [
@@ -34,6 +40,7 @@ __all__ = [
     "RepositoryTimeoutError",
     "RequestLimitError",
     "RequestLimits",
+    "SEARCH_ENGINE_VERSION",
     "SearchBible",
     "SearchCriteria",
     "SearchDeadlineExceeded",
@@ -42,4 +49,5 @@ __all__ = [
     "SearchValidationError",
     "SourceGeneration",
     "TranslationNotFoundError",
+    "requires_substring_matching",
 ]
