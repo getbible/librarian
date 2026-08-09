@@ -1,33 +1,86 @@
 # Scripture search
 
-## Basic search
+## The short version
+
+Pass a query string. Librarian works out how to read it.
 
 ```python
 from getbible import GetBible
 
 
 bible = GetBible()
-response = bible.search("faith hope", "kjv")
+
+bible.search("faith hope", "kjv")
+bible.search("神爱世人", "cus")      # Chinese, no spaces to tokenize
+bible.search("사랑", "korean")        # Korean, inside an inflected word
+bible.search("בראשית", "modernhebrew")  # unpointed, reaches pointed text
+bible.search("λογος", "moderngreek")    # unaccented, reaches accented text
 ```
 
-The default requires every query word, performs case-insensitive whole-word matching, searches every available book, returns canonical order, and returns at most 100 matches from offset zero.
+There is no match mode to choose, no script to detect, and no per-language
+branch to write. If you are carrying code that inspects a query and picks
+`match="substring"`, delete it — see [Migrating from 1.x](#migrating-from-1x).
 
-Use `search_json()` when an encoded response is required:
+The criteria that remain exist to *narrow* a search — a testament, a book, an
+exclusion. They do not tell the engine how to read a script.
+
+## How matching is decided
+
+Librarian classifies every run of text by the writing system it is actually in,
+and applies that system's rules. The same rules run over the corpus at index
+time and over your query at request time, so a query can only match what the
+same analysis produced from the verse.
+
+| Family | Scripts | How a searchable unit is found |
+|---|---|---|
+| Alphabetic | Latin, Cyrillic, Greek, Armenian, Georgian, Coptic, Cherokee | Words between spaces. Accents fold. |
+| Continuous | Han, Hiragana, Katakana, Hangul, Thai, Lao, Khmer, Myanmar, Tibetan | Overlapping character n-grams with positions. |
+| Abjad | Hebrew, Arabic, Syriac, Thaana, Samaritan | Words between spaces. Vowel pointing folds. A word behind an attached particle is also reachable by its stem. |
+| Brahmic | Devanagari, Bengali, Tamil, Telugu, Kannada, Malayalam, Sinhala | Words between spaces. Combining marks are **kept** — they carry vowels. |
+
+Classification is by Unicode property, not by a hand-maintained range table and
+not by the translation's declared language tag. That matters because the tag is
+not always sufficient: the API carries `zh` with no script subtag for one
+Chinese translation, and blank language names for several others. A translation
+added to the API later is classified from its text, with no code change here.
+
+The response reports the decision so you never have to infer it:
 
 ```python
-encoded = bible.search_json("faith hope", "kjv")
+bible.search("神", "cus")["query"]["analysis"]
+# {'script': 'continuous'}
 ```
 
-## JSON-friendly criteria
+### Mixed scripts
 
-`SearchBible` and plain dictionaries use the same field names.
+A verse or a query may hold more than one writing system. Each run keeps its own
+rules:
 
-`SearchBible` is the canonical public class name. `SearchCriteria` remains available as a compatibility alias for integrations that adopted the earlier development name.
+```python
+bible.search("Jesus 耶稣", "multi")
+# 'jesus' is matched as a whole Latin word; '耶稣' as a Han run
+```
 
-`SearchBible.expensive` is available immediately after parsing, before a
-translation is loaded. Public endpoints should use it to select the strict
-rate tier. It is true for substring, phrase, any-word, proximity, relevance,
-exclusion, insensitive-diacritic, deep-offset, and large-page criteria.
+This is why the 1.x helper had to go. It flipped the *whole* query to substring
+as soon as it saw one Han character, so `all` started matching inside `small`
+and `shall`.
+
+### Why whole-word and substring agree in continuous scripts
+
+Nothing in Han, kana, Hangul or Thai delimits a word, so there is no boundary
+for the two modes to disagree about. Both resolve the same way and both are
+exact. A caller cannot get this wrong by choosing either.
+
+A run of *n* characters is verified through its *n−1* overlapping bigrams: if
+bigram *i* sits at position *p+i* for every *i*, the run occurs at *p*. Positions
+settle it, so no verse text is rescanned and there are no false positives to
+filter. `神造` does not match `神神创造神` — the characters are present, the run
+is not.
+
+## Criteria
+
+`SearchBible` and plain dictionaries use the same field names. Every field is
+optional.
 
 | Field | Values | Default |
 |---|---|---|
@@ -36,9 +89,9 @@ exclusion, insensitive-diacritic, deep-offset, and large-page criteria.
 | `case_sensitive` | Boolean | `false` |
 | `scope` | `bible`, `old_testament`, `new_testament`, `deuterocanon` | `bible` |
 | `books` | Book names or numbers | Empty |
-| `diacritics` | `sensitive`, `insensitive` | `sensitive` |
+| `diacritics` | `fold`, `exact` | `fold` |
 | `exclude` | Words that must not occur | Empty |
-| `proximity` | 0–100 intervening words | `null` |
+| `proximity` | 0–100 intervening units | `null` |
 | `sort` | `canonical`, `relevance` | `canonical` |
 | `limit` | 1–1000 | `100` |
 | `offset` | Non-negative integer | `0` |
@@ -48,128 +101,85 @@ from getbible import GetBible, SearchBible
 
 
 bible = GetBible()
-criteria = SearchBible(
-    words="all",
-    match="whole_word",
-    case_sensitive=False,
-    scope="new_testament",
-    books=("John", "1 John"),
-    diacritics="insensitive",
-    exclude=("darkness",),
-    proximity=5,
-    sort="relevance",
-    limit=20,
-    offset=0,
-)
-response = bible.search("word life", "kjv", criteria)
-```
-
-`books` intersects with `scope`. For example, `scope="new_testament"` and `books=("John",)` searches only John.
-
-## Word modes
-
-### All words
-
-Every distinct query term must occur in the verse:
-
-```python
-criteria = SearchBible(words="all")
-response = bible.search("faith hope", "kjv", criteria)
-```
-
-### Any word
-
-At least one query term must occur:
-
-```python
-criteria = SearchBible(words="any")
-response = bible.search("faith hope", "kjv", criteria)
-```
-
-### Phrase
-
-Terms must occur in order and adjacent, with punctuation and whitespace allowed between whole words:
-
-```python
-criteria = SearchBible(words="phrase")
-response = bible.search("in the beginning", "kjv", criteria)
-```
-
-With `match="substring"`, phrase matching uses the normalized literal query.
-
-## Whole-word and substring matching
-
-Whole-word matching uses Unicode letter, combining-mark, and number boundaries. It supports accented Latin text, Greek, Hebrew combining marks, and other API scripts more correctly than ASCII word boundaries.
-
-Substring matching searches inside normalized tokens. For example, `great` can match `greatest`.
-
-The distinction remains explicit and deterministic: Librarian never silently
-rewrites a requested `whole_word` search. For languages that do not reliably
-separate words with spaces, applications should select `substring`.
-
-Librarian permits one- and two-grapheme substring terms only when the complete
-term uses Han, Japanese kana, Hangul, or a Unicode complex-context script such
-as Thai, Lao, Khmer, or Myanmar. The configured minimum remains in force for
-Latin, Arabic, Hebrew, Devanagari, Greek, Cyrillic, and other normally
-space-delimited scripts. Mixed short tokens such as `a神` are rejected.
-
-Applications can share Librarian's Unicode-property detector instead of
-maintaining character ranges:
-
-```python
-from getbible import requires_substring_matching
-
-
-match = (
-    "substring"
-    if requires_substring_matching(query)
-    else "whole_word"
+response = bible.search(
+    "word life",
+    "kjv",
+    SearchBible(
+        words="all",
+        scope="new_testament",
+        books=("John", "1 John"),
+        exclude=("darkness",),
+        sort="relevance",
+        limit=20,
+    ),
 )
 ```
 
-Use that automatic choice only when the caller has not explicitly selected a
-match mode. For a query mixing continuous-writing and space-delimited terms,
-keep the choice explicit: applying substring matching to the entire query also
-allows partial matches for its Latin or other space-delimited terms.
+`books` intersects with `scope`: `scope="new_testament"` with `books=("John",)`
+searches only John.
 
-Substring occurrence counts and relevance scores include every non-overlapping
-occurrence inside a token. Join controls (ZWNJ and ZWJ) remain part of the
-surrounding Arabic-script or Indic token instead of creating false word
-boundaries.
+Criteria may also be a JSON-decoded dictionary, which is what the HTTP service
+passes:
 
-## Case and diacritics
+```python
+bible.search("faith hope", "kjv", {"words": "phrase", "limit": 50})
+```
 
-Case-insensitive matching uses Unicode `casefold()`. Original verse text is never modified in the response.
+### Word modes
 
-Diacritic-insensitive matching decomposes Unicode characters and removes combining marks from the search index. This can make `Cafe` match `Café` and can ignore Hebrew vowel marks. It does not perform transliteration.
+- **`all`** (default): every distinct unit must occur in the verse.
+- **`any`**: at least one unit must occur.
+- **`phrase`**: units must occur in order at the spacing the query used.
+  Punctuation between them is allowed. Because a continuous run occupies one
+  position per character and a word occupies one, a phrase that crosses scripts
+  is handled by the same arithmetic.
 
-This option is never enabled automatically. Some scripts, including
-Devanagari and Southeast Asian scripts, use combining marks structurally, so
-callers should request insensitive matching only when it is appropriate for
-the selected translation.
+### Whole-word and substring
 
-## Testament and book scopes
+`whole_word` matches complete units. `substring` also matches inside a word, so
+`great` reaches `greatest`.
 
-- Old Testament: book numbers 1–39.
-- New Testament: book numbers 40–66.
-- Deuterocanonical or Apocryphal books: book numbers 67 and above.
-- Whole Bible: every book present in the selected translation.
+In continuous scripts the two are identical, as described above.
 
-Book names first resolve against the official names in the selected translation, then through Librarian's bundled alias tries.
+Substring terms in **space-delimited** scripts must be at least
+`min_substring_length` characters (3 by default). A one- or two-letter Latin
+fragment matches a large share of any vocabulary and is a scan rather than a
+word. The floor does not apply to Han, Hangul, Thai, Hebrew, Arabic or
+Devanagari, where two characters are an ordinary word that the index answers
+exactly. In a mixed query the floor still applies to the Latin run alone.
 
-## Exclusions and proximity
+### Case and diacritics
 
-`exclude` removes any verse containing one of the supplied words under the selected match mode.
+Case-insensitive matching uses Unicode `casefold()`, which also unifies Greek
+final and medial sigma (ς/σ) and expands the iota subscript. Both sides of a
+search pass through the same rule, so the forms meet.
 
-`proximity` is available with `words="all"`. A value of zero requires the terms to occupy an adjacent token window; larger values permit that number of intervening words.
+`diacritics="fold"` is the default. It removes combining marks and folds
+precomposed letters that Unicode decomposition cannot reach — `đ`, `ø`, `ł`,
+`ħ`, `æ`, `þ` and peers. That is what lets `Duc Chua Troi` reach
+`Ðức Chúa Trời`, `λογος` reach `λόγος`, and `בראשית` reach `בְּרֵאשִׁית`.
 
-## Pagination and ordering
+Folding is applied only where marks are accents or optional pointing. Brahmic
+and continuous scripts keep their marks, because there the marks carry vowels
+and removing them changes the word.
 
-The engine always calculates the exact total before returning the selected page.
+`diacritics="exact"` turns folding off and distinguishes pointed from unpointed
+text. The 1.x spellings `sensitive` and `insensitive` are still accepted and map
+to `exact` and `fold`.
 
-Canonical ordering follows API book, chapter, and verse order. Relevance ordering uses the number of matched occurrences, with canonical order as the stable tie-breaker.
+Original verse text is never modified in the response.
+
+### Exclusions and proximity
+
+`exclude` removes any verse containing one of the supplied words, analysed the
+same way as the query. `proximity` works with `words="all"` and permits that
+many intervening units.
 
 ## Response contract
+
+`results` is the same chapter-keyed object `select()` returns, so existing
+scripture templates keep working. `matches` is the authoritative order when
+sorting by relevance.
 
 ```text
 query
@@ -184,59 +194,91 @@ query
   returned
   has_more
   cache
+    checked_at
+    stale
+  analysis
+    script            ← how this translation was read
   cost
     work_units
     deadline_seconds
     expensive
 results
   <translation>_<book>_<chapter>
-    translation metadata
-    book and chapter metadata
+    translation, book and chapter metadata
     ref
     verses
 matches
-  reference
-  book_nr
-  chapter
-  verse
-  score
-  occurrences
-  terms
+  reference, book_nr, chapter, verse
+  score, occurrences, terms
 ```
 
-`results` is intentionally the same grouped scripture structure returned by `select()`. Search-specific information remains in `query` and `matches`, allowing existing scripture templates to render search results.
+`engine_version` is `3`. It moves whenever matching semantics change, so a
+downstream result cache can be invalidated without waiting for a translation SHA
+to change. **Key your response cache on it.**
 
-`matches` preserves global search order. This is especially important for relevance sorting because `results` groups verses by chapter.
+`SearchBible.expensive` is available before a translation is loaded and is the
+right signal for a strict rate tier. Diacritic folding is no longer part of it:
+folding happens once during index construction and costs nothing per request.
 
-The `sha` field identifies the exact full-translation payload used for the search, enabling downstream response-cache invalidation.
+## Performance and sharing
 
-`engine_version` identifies result-affecting search semantics independently of
-the translation SHA. Search response caches should include both values in
-their namespace and must be flushed when upgrading from an implementation that
-did not include the engine version. `SEARCH_ENGINE_VERSION` exports the same
-integer for cache-key construction before a search executes.
-
-`cost.work_units` is the deterministic estimate enforced by
-`SearchLimits.max_work_units`; it is suitable for aggregate metrics but is not
-wall-clock time. `deadline_seconds` reports the cooperative library deadline,
-and `expensive` mirrors the pre-execution rate-tier classification. The exact
-serialized response size is enforced internally but is not echoed because a
-size field would itself change the serialized size.
-
-## Legacy criteria notation
-
-The previously introduced compact notation remains accepted for compatibility:
+Corpora live in a registry keyed by repository, translation and source SHA, and
+are shared by every `GetBible` in the process. Two clients — or a client per
+request — reach the same parsed verses and the same analysed index, so a service
+pays the parse-and-analyse cost once per translation version rather than once
+per object.
 
 ```python
-response = bible.search(
-    "faith hope",
-    "kjv",
-    "allwords-exactmatch-caseinsensitive-newtestament",
-)
+bible.warm_translation("cus")   # build before traffic; returns the analysis report
 ```
 
-New integrations should use `SearchBible` or a dictionary because they support pagination, multiple books, exclusion, proximity, and future additive fields.
+An index build is bounded by `SearchLimits.index_build_seconds` (120 s default),
+not by the requesting call's `deadline_seconds`. A build serves every later
+request, so it must not be abandoned because one caller's request clock ran out.
+Concurrent first requests wait on one build rather than each starting their own.
 
-## Synonyms
+A search still refuses an unusable work budget before any index is built.
 
-Automatic synonyms are deliberately not part of the initial search contract. Synonyms are translation- and language-specific and should later be added through an explicit caller-supplied query-expansion interface rather than an implicit network or AI dependency.
+## Migrating from 1.x
+
+### Delete the match-mode selection
+
+```python
+# 1.x — remove this
+from getbible import requires_substring_matching
+
+if options.match == "whole_word" and requires_substring_matching(query):
+    options = replace(options, match="substring")
+```
+
+`requires_substring_matching()` now returns `False` for every query. It remains
+exported so existing imports keep working and the branch above becomes a no-op
+without an immediate code change — but delete it. Leaving it in place is
+harmless; leaving *substring* forced on is not, because it loosens Latin terms
+in a mixed query.
+
+### Behaviour that changes
+
+| | 1.x | 2.0 |
+|---|---|---|
+| Continuous scripts under default criteria | returned nothing | return the verses |
+| `diacritics` default | `sensitive` | `fold` |
+| Substring floor | all scripts | space-delimited scripts only |
+| `engine_version` | `2` | `3` |
+| Abjad with attached particle | missed | reachable by stem |
+
+Default searches return **more** than they did. If your application asserted a
+1.x total, re-derive it. Invalidate any cached search results — `engine_version`
+is there to key that on.
+
+### API that changed shape
+
+- `cache_info()["indexes"]` entries report `fold_diacritics` (boolean) instead
+  of `diacritics` (string).
+- `warm_translation()` takes `diacritics="fold"` by default and returns an
+  `analysis` block.
+- `SEARCH_ENGINE_VERSION` is `3`.
+- `getbible.search` is a package. Every public name still imports from
+  `getbible` and from `getbible.search`; the internal `_Matcher` class is gone.
+
+`select()`, `scripture()`, and the `results` structure are unchanged.

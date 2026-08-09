@@ -62,7 +62,7 @@ defaults.
 | `scope` | `scope` | `bible`, `old_testament`, `new_testament`, `deuterocanon` | `bible` |
 | `book` | `books` | Repeatable book name or number | All books |
 | `books` | `books` | Comma-separated names or numbers | All books |
-| `diacritics` | `diacritics` | `sensitive`, `insensitive` | `sensitive` |
+| `diacritics` | `diacritics` | `fold`, `exact` (1.x `insensitive`, `sensitive` still accepted) | `fold` |
 | `exclude` | `exclude` | Repeatable excluded term | None |
 | `proximity` | `proximity` | Integer from 0 through 100 | None |
 | `sort` | `sort` | `canonical`, `relevance` | `canonical` |
@@ -87,25 +87,23 @@ with limiter.reserve(caller_identity, tier=rate_tier):
     response = bible.search(query, translation, criteria)
 ```
 
-If the public service offers an automatic match choice, apply it only when the
-request omitted `match`:
+A service does not select a match mode on the caller's behalf, and must not
+rewrite one the caller supplied. Librarian derives matching from the writing
+system of the query and of the translation, so forwarding the query and the
+validated filters is the whole of the work:
 
 ```python
-from getbible import requires_substring_matching
-
-
-if (
-    "match" not in validated_filter_values
-    and requires_substring_matching(query)
-):
-    validated_filter_values["match"] = "substring"
+response = bible.search(query, translation, validated_filter_values)
 ```
 
-The helper uses Unicode Script Extensions and Complex Context line-breaking
-properties. It selects continuous-writing scripts such as Han, Japanese,
-Thai, Lao, Khmer, and Myanmar without incorrectly classifying Arabic, Hebrew,
-Devanagari, or Hangul as unsegmented. An explicitly supplied match mode must
-remain authoritative.
+Services that carried the 1.x pattern — inspecting the query with
+`requires_substring_matching()` and forcing `match="substring"` — should remove
+it. The helper now returns `False` for every query, so the branch is already
+inert; forcing substring is what causes harm, because in a query mixing scripts
+it loosens the space-delimited terms as well.
+
+`query.analysis.script` in the response reports how the translation was read,
+which is worth logging while a service confirms the change.
 
 Do not pass raw query values through Python truthiness (`bool("false")` is
 `True`), silently ignore unknown filters, or expose regular expressions.

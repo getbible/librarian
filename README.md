@@ -78,13 +78,22 @@ Search responses contain three top-level objects:
 
 This keeps existing scripture templates reusable. With relevance sorting, `matches` is the authoritative cross-chapter order.
 
-Substring search is script-aware. One- and two-character terms remain blocked
-for Latin and other normally space-delimited scripts, while meaningful short
-terms are supported for Han, Japanese kana, Hangul, and Unicode
-complex-context scripts such as Thai, Lao, Khmer, and Myanmar. Arabic, Hebrew,
-Devanagari, Greek, Cyrillic, and other space-delimited scripts retain Unicode
-whole-word behavior. See [Scripture search](docs/SEARCH.md) for the matching
-policy and shared continuous-writing-script detector.
+Matching is derived from the text, not chosen by the caller. Librarian
+classifies every run of a verse and of a query by the writing system it is
+actually in, and applies that system's rules, so a bare query string works in
+every translation the API publishes:
+
+```python
+bible.search("神爱世人", "cus")          # Chinese, nothing delimits a word
+bible.search("사랑", "korean")            # Korean, inside an inflected word
+bible.search("בראשית", "modernhebrew")   # unpointed, reaches pointed text
+bible.search("λογος", "moderngreek")     # unaccented, reaches accented text
+```
+
+There is no match mode to select and no script to detect. Applications
+carrying a helper that inspects the query and switches to `substring` should
+delete it. See [Scripture search](docs/SEARCH.md) for the matching policy, the
+response contract, and the 1.x migration.
 
 Search criteria may also be supplied as a JSON-decoded dictionary:
 
@@ -94,9 +103,7 @@ response = bible.search(
     "kjv",
     {
         "words": "phrase",
-        "match": "whole_word",
         "scope": "bible",
-        "diacritics": "sensitive",
         "limit": 50,
         "offset": 0,
     },

@@ -2,6 +2,74 @@
 
 All notable project changes are documented here.
 
+## [2.0.0] - Unreleased
+
+Search derives its matching strategy from the text. An application supplies a
+query string; it no longer decides how a writing system should be read.
+
+### Changed
+
+- **Continuous scripts are searchable under the default criteria.** Han, kana,
+  Hangul, Thai, Lao, Khmer, Myanmar and Tibetan are indexed as positioned
+  character n-grams, so `whole_word` — the default — reaches them. Previously
+  the whole clause between punctuation was one index token and no query could
+  equal it, so a default search returned nothing.
+- **`diacritics` defaults to `fold`** and takes `fold` or `exact`. Unaccented
+  Greek, unpointed Hebrew and unvowelled Arabic now reach the text. The 1.x
+  spellings `insensitive` and `sensitive` are accepted and map to the new
+  values.
+- **The substring minimum applies only to space-delimited scripts.** Two
+  characters of Han, Hangul, Thai, Hebrew, Arabic or Devanagari are an ordinary
+  word, answered exactly by the index rather than by a scan.
+- `SEARCH_ENGINE_VERSION` is `3`. Downstream result caches keyed on it will
+  invalidate.
+- `getbible.search` is a package. All public names still import from `getbible`
+  and from `getbible.search`.
+- `cache_info()["indexes"]` reports `fold_diacritics` instead of `diacritics`.
+- `warm_translation()` defaults to `diacritics="fold"` and returns an `analysis`
+  block.
+
+### Added
+
+- Script-aware analysis: every run of text is classified by writing system
+  through Unicode properties and analysed by that system's rules, so a
+  translation added to the API later needs no code change here.
+- Abjad stemming: a word behind an attached closed-class particle is reachable
+  by its stem, so `אור` finds `וְהָאוֹר` and `بدء` finds `الْبَدْءِ`.
+- Precomposed-letter folding for characters Unicode decomposition cannot reach,
+  so `Duc Chua Troi` reaches `Ðức Chúa Trời`.
+- Positional postings. A continuous run is verified by requiring its overlapping
+  bigrams at consecutive positions, which is exact and reads no verse text.
+- Trigram candidate generation for substring search.
+- A process-wide corpus registry keyed by repository, translation and source
+  SHA, so separate `GetBible` objects share one parsed, analysed copy.
+- `SearchLimits.index_build_seconds`, bounding index construction separately
+  from a request deadline.
+- `query.analysis.script` in the response, reporting how the translation was
+  read.
+- A golden harness that derives expectations from a complete API translation by
+  a plain text scan and requires the engine to agree. It skips when no tree is
+  present.
+
+### Fixed
+
+- A query mixing scripts no longer loosens its space-delimited terms. Under 1.x
+  an application flipped the whole query to substring on seeing one Han
+  character, so `all` matched inside `shall`.
+- Work is estimated from postings lengths. The previous estimator walked the
+  whole vocabulary once per term and cost more than the search it guarded.
+- An index build no longer runs against the requesting call's deadline. A build
+  that timed out cached nothing, so the next request repeated it and failed the
+  same way.
+- A query of nothing but combining marks is rejected rather than treated as an
+  empty term.
+
+### Deprecated
+
+- `requires_substring_matching()` returns `False` for every query and should be
+  deleted from callers. It remains exported so existing imports keep working.
+- `allows_short_substring()` reports whether the substring floor is waived.
+
 ## [1.2.1] - Unreleased
 
 ### Added
