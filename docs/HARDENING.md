@@ -42,23 +42,32 @@ The parser has an independent hard ceiling of 200 verses per reference and valid
 Search work is estimated deterministically from the corpus index, requested
 criteria, filter breadth, sorting mode, and response page before matching is
 allowed to continue. Execution performs cooperative deadline checks while
-building an index, scanning postings, testing phrases, and evaluating
-proximity. The response is serialized into the configured byte budget before
-it is returned.
+resolving units, testing phrases, and evaluating proximity. The response is
+serialized into the configured byte budget before it is returned.
 
-Substring terms must contain at least three extended grapheme clusters by
-default. This stops one-character vocabulary scans before the translation
-corpus is loaded. Script-tailored exceptions permit meaningful short Han,
-Japanese kana, Hangul, and Unicode complex-context terms while retaining the
-minimum for Latin and normally space-delimited scripts. Punctuation and
-combining marks cannot pad a short term past the limit.
+Index construction is bounded separately, by `index_build_seconds`. A build
+serves every later request, so it is never charged to the request that
+triggered it: a build abandoned on a request deadline cached nothing and left
+the next request repeating it. A request whose work budget cannot cover the
+corpus is still refused before any build starts.
+
+Substring terms must contain at least `min_substring_length` characters in
+space-delimited scripts, which stops open-ended vocabulary scans before the
+corpus is loaded. The floor does not apply to Han, kana, Hangul, Thai, Hebrew,
+Arabic or Devanagari, where two characters are an ordinary word that the index
+answers exactly rather than by scanning. In a query mixing scripts the floor
+still applies to the space-delimited run alone, so a short Latin fragment
+cannot ride in beside a Han character. A query of nothing but combining marks
+is rejected rather than treated as an empty term.
 
 Book-name and exclusion filters have both per-item and aggregate character
 budgets. These checks run before repository access and prevent oversized
 criteria from consuming normalization work or being echoed into a response.
 `SearchBible.expensive` classifies substring, phrase, any-word, proximity,
-relevance, exclusion, insensitive-diacritic, deep-offset, and large-page
-criteria before execution so the HTTP layer can apply its strict rate tier.
+relevance, exclusion, deep-offset, and large-page criteria before execution so
+the HTTP layer can apply its strict rate tier. Diacritic folding is no longer
+listed: it is the default and happens once during index construction, so it
+costs nothing per request.
 
 Legacy open forms such as `John 1:2-` and `John 1:-5` retain their established single-verse meaning. Reversed ranges, zero, malformed punctuation, and ranges above the configured ceiling are rejected.
 
