@@ -90,6 +90,37 @@ class ReleaseHardeningTestCase(unittest.TestCase):
         metadata = tuple(self.cache.rglob("test.metadata.json"))
         self.assertEqual(metadata, ())
 
+    def test_empty_optional_books_metadata_matches_published_corpora(self) -> None:
+        translation_path = self.repository / "v2" / "test.json"
+        translation = json.loads(translation_path.read_text(encoding="utf-8"))
+        translation["language"] = ""
+        translation["encoding"] = ""
+        translation_path.write_text(json.dumps(translation), encoding="utf-8")
+
+        books_path = self.repository / "v2" / "test" / "books.json"
+        books = json.loads(books_path.read_text(encoding="utf-8"))
+        for book in books.values():
+            book["language"] = ""
+            book["encoding"] = ""
+        books_path.write_text(json.dumps(books), encoding="utf-8")
+
+        self.assertEqual(self._bible().search("faith", "test")["query"]["total"], 3)
+
+    def test_empty_required_books_metadata_is_rejected(self) -> None:
+        translation_path = self.repository / "v2" / "test.json"
+        translation = json.loads(translation_path.read_text(encoding="utf-8"))
+        translation["lang"] = ""
+        translation_path.write_text(json.dumps(translation), encoding="utf-8")
+
+        books_path = self.repository / "v2" / "test" / "books.json"
+        books = json.loads(books_path.read_text(encoding="utf-8"))
+        for book in books.values():
+            book["lang"] = ""
+        books_path.write_text(json.dumps(books), encoding="utf-8")
+
+        with self.assertRaisesRegex(CacheIntegrityError, "invalid 'lang' field"):
+            self._bible().search("faith", "test")
+
     def test_validated_payload_is_content_addressed_and_versioned(self) -> None:
         sha = self._publish_translation_sha()
         bible = self._bible(require_checksums=True)

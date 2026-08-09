@@ -69,6 +69,8 @@ query string; it no longer decides how a writing system should be read.
 - Isolated combining marks cannot create index terms or skew script reporting.
 - A query of nothing but combining marks is rejected rather than treated as an
   empty term.
+- Empty optional language or encoding labels in published translation metadata
+  no longer prevent an otherwise valid corpus from loading.
 
 ### Deprecated
 
