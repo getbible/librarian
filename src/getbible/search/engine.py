@@ -10,6 +10,7 @@ and costs what the result set costs rather than what the vocabulary costs.
 
 from __future__ import annotations
 
+import time
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 
@@ -31,7 +32,7 @@ __all__ = [
 
 #: Bumped whenever matching semantics change, so a downstream result cache can
 #: be invalidated without waiting for a translation SHA to move.
-SEARCH_ENGINE_VERSION = 3
+SEARCH_ENGINE_VERSION = 4
 
 
 @dataclass(frozen=True, slots=True)
@@ -203,9 +204,6 @@ class SearchEngine:
         query: str,
         criteria: SearchBible,
     ) -> tuple[list[SearchHit], int]:
-        # Validate the corpus-independent request before touching the index.
-        # The preliminary budget also rejects an impossible corpus scan before
-        # an expensive index build starts.
         budget = SearchBudget(self.limits)
         _, units, exclusions = validate_search_request(query, criteria, self.limits)
         book_filter = self._book_filter(criteria)
@@ -213,14 +211,14 @@ class SearchEngine:
         # known without touching the index. Checking it first keeps a request
         # with an unusable budget from triggering an index build.
         budget.reserve(len(self.corpus.records) + criteria.limit * 8)
+        acquiring = time.monotonic()
         index = self.corpus.index(
             criteria.case_sensitive, criteria.fold_diacritics, self.limits
         )
-        # Index construction has its own bounded build window and produces a
-        # shared asset for later requests. Start the per-request execution
-        # deadline only after that one-time work has completed.
-        budget = SearchBudget(self.limits)
-        budget.reserve(len(self.corpus.records) + criteria.limit * 8)
+        # Building an index, or waiting for another request to build it, is
+        # separately bounded shared work. Exclude only that interval while
+        # retaining all request-owned validation and filtering time.
+        budget.extend(time.monotonic() - acquiring)
         budget.reserve(self._estimate_work(index, units, exclusions, criteria))
 
         resolved = [self._resolve(index, unit, criteria, budget) for unit in units]

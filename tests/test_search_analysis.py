@@ -8,6 +8,7 @@ made to fit the implementation.
 import json
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from getbible.search.analysis import (
     Analyzer,
@@ -15,6 +16,7 @@ from getbible.search.analysis import (
     classify_text,
     fold_marks,
     normalize_book_name,
+    script_census,
 )
 from getbible.search.index import build_index, chain_matches, merge_verses
 
@@ -115,6 +117,36 @@ class TestAnalyzer(unittest.TestCase):
         self.assertIn("예수", terms)        # Hangul becomes n-grams
         self.assertNotIn("jesus耶稣", terms)
 
+    def test_single_pass_scanner_preserves_every_family_boundary(self) -> None:
+        self.assertEqual(
+            self.analyzer.runs("Faith’s—神爱世人—בְּרֵאשִׁית׃—पृथ्वी"),
+            [
+                (ScriptFamily.ALPHABETIC, "faith’s"),
+                (ScriptFamily.CONTINUOUS, "神爱世人"),
+                (ScriptFamily.ABJAD, "בראשית"),
+                (ScriptFamily.BRAHMIC, "पृथ्वी"),
+            ],
+        )
+
+    def test_join_controls_remain_inside_abjad_and_brahmic_words(self) -> None:
+        self.assertEqual(
+            self.analyzer.runs("می‌رود"),
+            [(ScriptFamily.ABJAD, "می‌رود")],
+        )
+        self.assertEqual(
+            self.analyzer.runs("क्‍ष"),
+            [(ScriptFamily.BRAHMIC, "क्‍ष")],
+        )
+
+    def test_isolated_marks_do_not_create_runs_or_skew_script_census(self) -> None:
+        isolated_marks = "َ ा ่ ◌́".replace("◌", "")
+
+        self.assertEqual(self.analyzer.tokens(isolated_marks), [])
+        self.assertEqual(
+            script_census([isolated_marks]),
+            dict.fromkeys(ScriptFamily, 0),
+        )
+
     def test_accents_fold_so_unaccented_queries_reach_accented_text(self) -> None:
         self.assertEqual(self._terms("λόγος"), self._terms("λογος"))
         self.assertEqual(self._terms("Ðức Chúa Trời"), self._terms("Duc Chua Troi"))
@@ -152,6 +184,12 @@ class TestAnalyzer(unittest.TestCase):
 
     def test_fold_marks_reaches_precomposed_letters(self) -> None:
         self.assertEqual(fold_marks("Đường ø ł"), "Duong o l")
+
+    def test_ascii_mark_folding_bypasses_unicode_normalization(self) -> None:
+        with patch("getbible.search.analysis.unicodedata.normalize") as normalize:
+            self.assertEqual(fold_marks("faith's 123"), "faith's 123")
+
+        normalize.assert_not_called()
 
     def test_book_names_fold_for_lookup(self) -> None:
         self.assertEqual(normalize_book_name("1 Cor."), "1cor")
