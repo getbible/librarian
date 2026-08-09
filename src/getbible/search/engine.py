@@ -10,7 +10,7 @@ and costs what the result set costs rather than what the vocabulary costs.
 
 from __future__ import annotations
 
-from collections.abc import Callable, Iterable, Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 
 from ..exceptions import SearchLimitError, SearchValidationError
@@ -139,7 +139,10 @@ def validate_search_request(
         raise SearchValidationError(
             f"Search query cannot exceed {limits.max_query_terms} terms."
         )
-    if criteria.words != "phrase":
+    if criteria.words != "phrase" and criteria.proximity is None:
+        # Repeating a word is meaningful under proximity — it asks for two
+        # occurrences close together — so the units are only collapsed where a
+        # duplicate would add nothing.
         units = tuple({unit.text: unit for unit in units}.values())
 
     exclusions = tuple(
@@ -495,10 +498,6 @@ def _within_proximity(
             return False
 
 
-def merged_terms(units: Iterable[QueryUnit]) -> tuple[str, ...]:
-    return tuple(unit.text for unit in units)
-
-
 def requires_substring_matching(query: str) -> bool:
     """Deprecated. Always ``False``.
 
@@ -526,7 +525,6 @@ def allows_short_substring(term: str) -> bool:
 
 __all__ += [
     "allows_short_substring",
-    "merged_terms",
     "normalize_text",
     "requires_substring_matching",
 ]

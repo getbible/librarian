@@ -273,3 +273,20 @@ class TestProximityWindows(unittest.TestCase):
 
         self.assertFalse(self.check(resolved, self._units(2), 0, 1))
         self.assertTrue(self.check(resolved, self._units(2), 0, 2))
+
+    def test_a_repeated_unit_asks_for_two_occurrences(self) -> None:
+        # "faith faith" under proximity means two occurrences close together,
+        # so the duplicate must survive into matching.
+        from getbible.search import SearchBible
+        from getbible.search.engine import validate_search_request
+        from getbible.search.limits import SearchLimits
+
+        _, units, _ = validate_search_request(
+            "faith faith", SearchBible(proximity=3), SearchLimits()
+        )
+        _, collapsed, _ = validate_search_request(
+            "faith faith", SearchBible(), SearchLimits()
+        )
+
+        self.assertEqual(len(units), 2)
+        self.assertEqual(len(collapsed), 1)
