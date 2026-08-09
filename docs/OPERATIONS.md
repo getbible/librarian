@@ -65,11 +65,46 @@ The first search for a translation includes disk or network loading, JSON parsin
 Do not warm every case and diacritic variant unless production traffic requires them; each variant consumes additional memory.
 
 `warm_translation()` accepts `case_sensitive` and `diacritics` when a non-default
-index is known to be common:
+index is known to be common. It returns an `analysis` block reporting how the
+translation was read, which is worth recording once per deployment:
 
 ```python
-bible.warm_translation("kjv", case_sensitive=True, diacritics="insensitive")
+bible.warm_translation("kjv", case_sensitive=True, diacritics="exact")
 ```
+
+## Shared corpora
+
+Parsed translations and their analysed indexes live in a registry shared by
+every `GetBible` in the process, keyed by repository, translation and source
+SHA. A service that constructs a client per request, or holds several clients
+for different configurations, pays the parse-and-analyse cost once per
+translation version rather than once per object.
+
+Keying on the SHA is what makes this safe: when a translation changes upstream,
+the new SHA produces a new entry instead of silently reusing stale verses. The
+superseded entry is evicted by ordinary LRU pressure.
+
+Sharing is per process. Pre-fork workers each hold their own registry unless the
+parent warmed the translation before forking, in which case the pages are shared
+copy-on-write — see [Pre-fork servers](#pre-fork-servers).
+
+## Index build window
+
+Index construction is bounded by `SearchLimits.index_build_seconds` (120 seconds
+by default), which is deliberately separate from the per-request
+`deadline_seconds`.
+
+A build serves every later request, so it must not be abandoned because one
+caller's request clock ran out. Under 1.x a build charged to a request deadline
+could time out, cache nothing, and leave the next request repeating the same
+work and failing the same way — a stall the service could not recover from on
+its own. Concurrent first requests now wait on a single build.
+
+Raise `index_build_seconds` only if a very large translation genuinely needs
+longer on your hardware; warming before traffic is the better answer.
+
+A request whose work budget cannot cover the corpus is still refused before any
+index build starts.
 
 ## Bounded memory
 

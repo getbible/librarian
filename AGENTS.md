@@ -23,6 +23,8 @@ The primary project home remains <https://git.vdm.dev/getBible/librarian>. GitHu
 - `GetBible.scripture()` returns that same dictionary encoded as JSON.
 - `GetBible.search()` returns an envelope containing `query`, `results`, and `matches`.
 - `SearchBible` is the canonical public class for configuring search behavior.
+- Search derives its matching strategy from the writing system of the text and of the query. Do not reintroduce a public option, helper, or documented pattern that asks an application to choose how a script is read.
+- A bare `search(query, translation)` call must return correct results for every translation the API publishes.
 - `search()["results"]` must retain the same chapter and verse object structure as `select()`.
 - Additive metadata is allowed. Removing or renaming existing scripture fields requires an explicit compatibility decision and migration documentation.
 - Translation abbreviations are lowercase API identifiers and must be validated with a full match.
@@ -37,7 +39,9 @@ The primary project home remains <https://git.vdm.dev/getBible/librarian>. GitHu
 - Verify full-translation bytes before replacing a last-known-good cache entry.
 - Disk replacements must be atomic and coordinated between worker processes.
 - Network sessions must not be reused across a process fork.
-- Keep loaded translation corpora immutable. Build alternative normalized search indexes lazily.
+- Keep loaded translation corpora immutable. Build alternative analysed search indexes lazily.
+- Corpora are shared process-wide through the registry keyed by repository, translation, and source SHA. Do not reintroduce per-instance corpus ownership.
+- Index construction is bounded by `index_build_seconds`, never by a request deadline. A build that is abandoned must not leave the next request repeating it.
 - Preserve bounded process-local caches and reference-counted keyed locks; public API workloads must not grow memory solely because new keys or translations are requested.
 - Preserve `warm_translation()`, JSON-safe `cache_info()`, and orderly `close()` behavior when changing repository or cache internals.
 - When a validated source SHA is unchanged, retain the existing corpus and built indexes while updating freshness metadata.
@@ -78,6 +82,8 @@ Run the search benchmark after warming or changing the search engine:
 - Test concurrent access when changing cache or corpus coordination.
 - Run the live suite before a release.
 - Benchmark common and rare terms before replacing or expanding the postings index.
+- Cover every writing-system family when changing analysis: space-delimited, continuous, abjad, and Brahmic.
+- Run the golden corpora suite against a real API tree before a release: `GETBIBLE_API_FIXTURES=<tree> .venv/bin/python -m unittest tests.test_golden_corpora`.
 
 ## Release expectations
 
