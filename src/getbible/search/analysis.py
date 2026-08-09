@@ -30,6 +30,7 @@ __all__ = [
     "analyzer_for",
     "casefold_text",
     "classify_text",
+    "continuous_chain",
     "fold_marks",
     "normalize_text",
     "normalize_book_name",
@@ -298,6 +299,30 @@ class Analyzer:
         """Return only the distinct index keys, preserving first-seen order."""
         return list(dict.fromkeys(token.term for token in self.tokens(text)))
 
+    def runs(self, text: str) -> list[tuple[ScriptFamily, str]]:
+        """Split text into the units a reader would consider separate things.
+
+        Space-delimited scripts yield one entry per word; continuous scripts
+        yield one entry per uninterrupted run. Query parsing uses this so a
+        query mixing scripts is handled part by part rather than forcing one
+        strategy onto the whole string.
+        """
+        produced: list[tuple[ScriptFamily, str]] = []
+        for family, run in _classify_runs(self.prepare(text)):
+            if family is ScriptFamily.ALPHABETIC:
+                candidates = [self._fold(match.group()) for match in _WORD.finditer(run)]
+            elif family is ScriptFamily.ABJAD:
+                candidates = [self._fold(run)]
+            else:
+                candidates = [run]
+            # Folding can empty a run that held nothing but combining marks. A
+            # unit with no letter or number is not something a reader asked for,
+            # and letting one through would silently match every verse.
+            produced.extend(
+                (family, value) for value in candidates if _LETTER.search(value)
+            )
+        return produced
+
     def _alphabetic_tokens(
         self, run: str, position: int, produced: list[Token]
     ) -> int:
@@ -352,6 +377,29 @@ def _strip_proclitic(word: str) -> str | None:
 
 def _is_hebrew(word: str) -> bool:
     return bool(word) and regex.match(r"\p{Script_Extensions=Hebrew}", word[0]) is not None
+
+
+def continuous_chain(run: str) -> tuple[Token, ...]:
+    """Return the tokens that prove a continuous-script run occurs verbatim.
+
+    A run of ``n`` characters is pinned by its ``n - 1`` overlapping bigrams: if
+    bigram ``i`` sits at position ``p + i`` for every ``i``, the run occurs at
+    ``p``. A single character is pinned by itself. Positions alone settle it, so
+    verifying a match never reads the verse text.
+    """
+    graphemes = _GRAPHEME.findall(run)
+    if not graphemes:
+        return ()
+    if len(graphemes) == 1:
+        return (Token(graphemes[0], 0, ScriptFamily.CONTINUOUS),)
+    return tuple(
+        Token(
+            "".join(graphemes[offset:offset + _MAX_GRAM]),
+            offset,
+            ScriptFamily.CONTINUOUS,
+        )
+        for offset in range(len(graphemes) - _MAX_GRAM + 1)
+    )
 
 
 def analyzer_for(case_sensitive: bool, fold_diacritics: bool) -> Analyzer:

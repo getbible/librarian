@@ -1,335 +1,37 @@
-"""Unicode-aware, JSON-friendly scripture search engine."""
+"""Query execution against an analysed translation.
+
+The engine never asks the caller how to read a script. A query is passed
+through the same analyser that built the index, which turns it into *units*:
+one unit per word in a space-delimited script, one per uninterrupted run in a
+continuous script. Units are then resolved through positional postings, so
+"which verses contain this" is answered the same way in every writing system
+and costs what the result set costs rather than what the vocabulary costs.
+"""
 
 from __future__ import annotations
 
-import threading
-import time
-import unicodedata
-from array import array
-from collections import Counter
-from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass, field, replace
-from itertools import groupby
-from typing import Any, ClassVar
+from collections.abc import Callable, Iterable, Sequence
+from dataclasses import dataclass
 
-import regex
+from ..exceptions import SearchLimitError, SearchValidationError
+from .analysis import Analyzer, ScriptFamily, Token, continuous_chain, normalize_text
+from .corpus import TranslationCorpus, VerseRecord
+from .criteria import SearchBible
+from .index import SearchIndex, chain_matches
+from .limits import SearchBudget, SearchLimits
 
-from ..exceptions import (
-    CacheIntegrityError,
-    SearchDeadlineExceeded,
-    SearchLimitError,
-    SearchValidationError,
-)
-from ..translation_cache import TranslationSnapshot
+__all__ = [
+    "SEARCH_ENGINE_VERSION",
+    "QueryUnit",
+    "SearchEngine",
+    "SearchHit",
+    "analyze_query",
+    "validate_search_request",
+]
 
-_WORD_START_CHARACTER_CLASS = r"\p{L}\p{N}"
-_WORD_CHARACTER_CLASS = rf"{_WORD_START_CHARACTER_CLASS}\p{{M}}\u200C\u200D"
-_TOKEN = regex.compile(
-    rf"[{_WORD_START_CHARACTER_CLASS}][{_WORD_CHARACTER_CLASS}]*"
-    rf"(?:['’][{_WORD_START_CHARACTER_CLASS}][{_WORD_CHARACTER_CLASS}]*)*"
-)
-_GRAPHEME = regex.compile(r"\X")
-_CONTINUOUS_WRITING_SCRIPT_CLASS = (
-    r"\p{Script_Extensions=Han}"
-    r"\p{Script_Extensions=Hiragana}"
-    r"\p{Script_Extensions=Katakana}"
-    r"\p{Line_Break=Complex_Context}"
-)
-_SHORT_SUBSTRING_SCRIPT_CLASS = (
-    _CONTINUOUS_WRITING_SCRIPT_CLASS + r"\p{Script_Extensions=Hangul}"
-)
-_CONTINUOUS_WRITING_SCRIPT = regex.compile(
-    rf"[{_CONTINUOUS_WRITING_SCRIPT_CLASS}]"
-)
-_SHORT_SUBSTRING_TERM = regex.compile(
-    rf"(?V1)\A"
-    rf"(?=[{_WORD_CHARACTER_CLASS}]*[{_SHORT_SUBSTRING_SCRIPT_CLASS}])"
-    rf"[{_SHORT_SUBSTRING_SCRIPT_CLASS}\p{{M}}\p{{N}}\u200C\u200D]+"
-    rf"\Z"
-)
-_VALID_WORDS = frozenset({"all", "any", "phrase"})
-_VALID_MATCH = frozenset({"whole_word", "substring"})
-_VALID_SCOPE = frozenset({"bible", "old_testament", "new_testament", "deuterocanon"})
-_VALID_DIACRITICS = frozenset({"sensitive", "insensitive"})
-_VALID_SORT = frozenset({"canonical", "relevance"})
-SEARCH_ENGINE_VERSION = 2
-
-
-@dataclass(frozen=True, slots=True)
-class SearchLimits:
-    """Deterministic per-search work, output, filter, and deadline budgets."""
-
-    max_work_units: int = 50_000_000
-    max_response_bytes: int = 4 * 1024 * 1024
-    max_query_length: int = 500
-    max_query_terms: int = 64
-    min_substring_length: int = 3
-    max_books: int = 83
-    max_book_length: int = 256
-    max_books_length: int = 4_096
-    max_exclusions: int = 32
-    max_exclusion_length: int = 500
-    max_exclusions_length: int = 4_000
-    max_exclusion_terms: int = 64
-    max_offset: int = 10_000
-    max_limit: int = 1_000
-    deadline_seconds: float = 5.0
-    deadline_check_interval: int = 256
-
-    def __post_init__(self) -> None:
-        integer_fields = (
-            "max_work_units",
-            "max_response_bytes",
-            "max_query_length",
-            "max_query_terms",
-            "min_substring_length",
-            "max_books",
-            "max_book_length",
-            "max_books_length",
-            "max_exclusions",
-            "max_exclusion_length",
-            "max_exclusions_length",
-            "max_exclusion_terms",
-            "max_limit",
-            "deadline_check_interval",
-        )
-        for name in integer_fields:
-            value = getattr(self, name)
-            if not isinstance(value, int) or isinstance(value, bool) or value < 1:
-                raise ValueError(f"{name} must be a positive integer.")
-        if (
-            not isinstance(self.max_offset, int)
-            or isinstance(self.max_offset, bool)
-            or self.max_offset < 0
-        ):
-            raise ValueError("max_offset must be a non-negative integer.")
-        if not isinstance(self.deadline_seconds, int | float) or isinstance(
-            self.deadline_seconds, bool
-        ):
-            raise TypeError("deadline_seconds must be numeric.")
-        if not 0.001 <= float(self.deadline_seconds) <= 300.0:
-            raise ValueError("deadline_seconds must be between 0.001 and 300 seconds.")
-
-    def to_dict(self) -> dict[str, int | float]:
-        return {name: getattr(self, name) for name in self.__dataclass_fields__}
-
-
-class SearchBudget:
-    """One request's deterministic work reservation and cooperative deadline."""
-
-    def __init__(self, limits: SearchLimits) -> None:
-        self.limits = limits
-        self.started_at = time.monotonic()
-        self.deadline = self.started_at + float(limits.deadline_seconds)
-        self.work_units = 0
-
-    def reserve(self, units: int) -> None:
-        if not isinstance(units, int) or isinstance(units, bool) or units < 0:
-            raise ValueError("Search work units must be a non-negative integer.")
-        if units > self.limits.max_work_units:
-            raise SearchLimitError(
-                "Search requires "
-                f"{units} work units; the configured maximum is "
-                f"{self.limits.max_work_units}."
-            )
-        self.work_units = max(self.work_units, units)
-        self.check_deadline()
-
-    def checkpoint(self, iteration: int = 0) -> None:
-        if iteration % self.limits.deadline_check_interval == 0:
-            self.check_deadline()
-
-    def check_deadline(self) -> None:
-        if time.monotonic() >= self.deadline:
-            raise SearchDeadlineExceeded(
-                f"Search exceeded its {float(self.limits.deadline_seconds):g}-second deadline."
-            )
-
-    @property
-    def elapsed_seconds(self) -> float:
-        return max(0.0, time.monotonic() - self.started_at)
-
-
-@dataclass(frozen=True, slots=True)
-class SearchBible:
-    """Validated, serializable Bible search behavior."""
-
-    MAX_LIMIT: ClassVar[int] = 1000
-    words: str = "all"
-    match: str = "whole_word"
-    case_sensitive: bool = False
-    scope: str = "bible"
-    books: tuple[int | str, ...] = field(default_factory=tuple)
-    diacritics: str = "sensitive"
-    exclude: tuple[str, ...] = field(default_factory=tuple)
-    proximity: int | None = None
-    sort: str = "canonical"
-    limit: int = 100
-    offset: int = 0
-
-    def __post_init__(self) -> None:
-        for name in ("words", "match", "scope", "diacritics", "sort"):
-            if not isinstance(getattr(self, name), str):
-                raise SearchValidationError(f"{name} must be a string.")
-        object.__setattr__(self, "words", self.words.casefold())
-        object.__setattr__(self, "match", self.match.casefold())
-        object.__setattr__(self, "scope", self.scope.casefold())
-        object.__setattr__(self, "diacritics", self.diacritics.casefold())
-        object.__setattr__(self, "sort", self.sort.casefold())
-        books = (self.books,) if isinstance(self.books, (str, int)) else tuple(self.books)
-        excluded = (self.exclude,) if isinstance(self.exclude, str) else tuple(self.exclude)
-        object.__setattr__(self, "books", books)
-        object.__setattr__(self, "exclude", excluded)
-        self._validate()
-
-    @classmethod
-    def from_value(
-        cls,
-        value: SearchBible | Mapping[str, Any] | str | None,
-    ) -> SearchBible:
-        if value is None:
-            return cls()
-        if isinstance(value, cls):
-            return value
-        if isinstance(value, str):
-            return cls.from_legacy(value)
-        if not isinstance(value, Mapping):
-            raise SearchValidationError(
-                "Search criteria must be a SearchBible object, mapping, or legacy string."
-            )
-        allowed = {
-            "words", "match", "case_sensitive", "scope", "books", "diacritics",
-            "exclude", "proximity", "sort", "limit", "offset",
-        }
-        unknown = set(value) - allowed
-        if unknown:
-            raise SearchValidationError(
-                f"Unknown search criteria: {', '.join(sorted(unknown))}."
-            )
-        try:
-            return cls(**dict(value))
-        except TypeError as error:
-            raise SearchValidationError(str(error)) from error
-
-    @classmethod
-    def from_legacy(cls, value: str) -> SearchBible:
-        parts = value.split("-")
-        if len(parts) != 4:
-            raise SearchValidationError(f"Invalid legacy search criteria '{value}'.")
-        words, match, case, target = parts
-        word_map = {"allwords": "all", "anywords": "any", "exactwords": "phrase"}
-        match_map = {"exactmatch": "whole_word", "partialmatch": "substring"}
-        case_map = {"caseinsensitive": False, "casesensitive": True}
-        scope_map = {
-            "allbooks": "bible",
-            "oldtestament": "old_testament",
-            "newtestament": "new_testament",
-            "deuterocanon": "deuterocanon",
-        }
-        if words not in word_map or match not in match_map or case not in case_map:
-            raise SearchValidationError(f"Invalid legacy search criteria '{value}'.")
-        if target in scope_map:
-            return cls(
-                words=word_map[words],
-                match=match_map[match],
-                case_sensitive=case_map[case],
-                scope=scope_map[target],
-            )
-        if target.isdigit() and 1 <= int(target) <= 83:
-            return cls(
-                words=word_map[words],
-                match=match_map[match],
-                case_sensitive=case_map[case],
-                books=(int(target),),
-            )
-        raise SearchValidationError(f"Invalid legacy search criteria '{value}'.")
-
-    def with_pagination(self, limit: int, offset: int) -> SearchBible:
-        return replace(self, limit=limit, offset=offset)
-
-    @property
-    def expensive(self) -> bool:
-        """Classify strict-rate-tier searches without loading a translation."""
-        return (
-            self.match == "substring"
-            or self.words in {"any", "phrase"}
-            or self.proximity is not None
-            or self.sort == "relevance"
-            or bool(self.exclude)
-            or self.diacritics == "insensitive"
-            or self.offset > 1_000
-            or self.limit > 100
-        )
-
-    def to_dict(self) -> dict[str, Any]:
-        return {
-            "words": self.words,
-            "match": self.match,
-            "case_sensitive": self.case_sensitive,
-            "scope": self.scope,
-            "books": list(self.books),
-            "diacritics": self.diacritics,
-            "exclude": list(self.exclude),
-            "proximity": self.proximity,
-            "sort": self.sort,
-            "limit": self.limit,
-            "offset": self.offset,
-        }
-
-    def _validate(self) -> None:
-        if self.words not in _VALID_WORDS:
-            raise SearchValidationError(f"Invalid words mode '{self.words}'.")
-        if self.match not in _VALID_MATCH:
-            raise SearchValidationError(f"Invalid match mode '{self.match}'.")
-        if not isinstance(self.case_sensitive, bool):
-            raise SearchValidationError("case_sensitive must be a boolean.")
-        if self.scope not in _VALID_SCOPE:
-            raise SearchValidationError(f"Invalid search scope '{self.scope}'.")
-        if self.diacritics not in _VALID_DIACRITICS:
-            raise SearchValidationError(f"Invalid diacritics mode '{self.diacritics}'.")
-        if self.sort not in _VALID_SORT:
-            raise SearchValidationError(f"Invalid sort mode '{self.sort}'.")
-        if any(not isinstance(book, (int, str)) or isinstance(book, bool) for book in self.books):
-            raise SearchValidationError("books must contain only book names or numbers.")
-        if any(not isinstance(term, str) or not term.strip() for term in self.exclude):
-            raise SearchValidationError("exclude must contain non-empty strings.")
-        if self.proximity is not None:
-            if not isinstance(self.proximity, int) or isinstance(self.proximity, bool):
-                raise SearchValidationError("proximity must be an integer or null.")
-            if self.proximity < 0 or self.proximity > 100:
-                raise SearchValidationError("proximity must be between 0 and 100.")
-            if self.words != "all":
-                raise SearchValidationError("proximity is supported only with words='all'.")
-        if not isinstance(self.limit, int) or isinstance(self.limit, bool):
-            raise SearchValidationError("limit must be an integer.")
-        if not 1 <= self.limit <= self.MAX_LIMIT:
-            raise SearchValidationError(
-                f"limit must be between 1 and {self.MAX_LIMIT}."
-            )
-        if not isinstance(self.offset, int) or isinstance(self.offset, bool) or self.offset < 0:
-            raise SearchValidationError("offset must be a non-negative integer.")
-
-
-# Compatibility for integrations that adopted the pre-1.2 development name.
-SearchCriteria = SearchBible
-
-
-@dataclass(frozen=True, slots=True)
-class VerseRecord:
-    ordinal: int
-    book_nr: int
-    book_name: str
-    chapter: int
-    chapter_name: str
-    verse: dict[str, Any]
-
-    @property
-    def text(self) -> str:
-        return str(self.verse["text"])
-
-    @property
-    def reference(self) -> str:
-        return str(self.verse["name"])
+#: Bumped whenever matching semantics change, so a downstream result cache can
+#: be invalidated without waiting for a translation SHA to move.
+SEARCH_ENGINE_VERSION = 3
 
 
 @dataclass(frozen=True, slots=True)
@@ -340,191 +42,57 @@ class SearchHit:
     terms: tuple[str, ...]
 
 
-@dataclass(slots=True)
-class SearchIndex:
-    """Compact token postings and normalized verse text for one text mode."""
+@dataclass(frozen=True, slots=True)
+class QueryUnit:
+    """One thing the reader asked for, in the form the index stores it."""
 
-    texts: tuple[str, ...]
-    postings: dict[str, array]
-    document_frequency: dict[str, int]
-    build_work_units: int
+    text: str
+    tokens: tuple[Token, ...]
+    family: ScriptFamily
+    offset: int
+    span: int
+
+    @property
+    def continuous(self) -> bool:
+        return self.family is ScriptFamily.CONTINUOUS
 
 
-class TranslationCorpus:
-    """Immutable canonical verse records with lazily cached text variants."""
+def analyze_query(analyzer: Analyzer, query: str) -> tuple[QueryUnit, ...]:
+    """Split a query into units using the writing system of each part.
 
-    _CHAPTER_METADATA = (
-        "translation", "abbreviation", "lang", "language", "direction", "encoding"
-    )
-
-    def __init__(self, snapshot: TranslationSnapshot) -> None:
-        self.sha = snapshot.sha
-        self.checked_at = snapshot.checked_at
-        self.stale = snapshot.stale
-        self.translation_metadata = {
-            key: value for key, value in snapshot.data.items() if key != "books"
-        }
-        self.chapter_metadata = {
-            key: snapshot.data[key]
-            for key in self._CHAPTER_METADATA
-            if key in snapshot.data
-        }
-        self.records = self._build_records(snapshot.data)
-        # Charge index construction from immutable corpus characteristics so
-        # the budget can reject it before normalization and tokenization begin.
-        self.index_build_work_units = len(self.records) + sum(
-            len(record.text) * 2 for record in self.records
-        )
-        self.available_books = frozenset(record.book_nr for record in self.records)
-        self.book_names = self._build_book_names(self.records)
-        self._variants: dict[tuple[bool, str], SearchIndex] = {}
-        self._variant_lock = threading.Lock()
-        self._state_lock = threading.Lock()
-
-    def refresh_state(self, snapshot: TranslationSnapshot) -> None:
-        """Adopt freshness metadata without rebuilding unchanged verse indexes."""
-        if snapshot.sha != self.sha:
-            raise ValueError("Cannot refresh a corpus from a different translation SHA.")
-        with self._state_lock:
-            if snapshot.checked_at >= self.checked_at:
-                self.checked_at = snapshot.checked_at
-                self.stale = snapshot.stale
-
-    def cache_state(self) -> tuple[float, bool]:
-        """Return one consistent cache-state snapshot."""
-        with self._state_lock:
-            return self.checked_at, self.stale
-
-    def cache_info(self) -> dict[str, Any]:
-        """Return JSON-friendly corpus and normalized-index information."""
-        checked_at, stale = self.cache_state()
-        with self._variant_lock:
-            variants = [
-                {
-                    "case_sensitive": case_sensitive,
-                    "diacritics": diacritics,
-                }
-                for case_sensitive, diacritics in sorted(self._variants)
-            ]
-        return {
-            "sha": self.sha,
-            "checked_at": checked_at,
-            "stale": stale,
-            "verses": len(self.records),
-            "indexes": variants,
-        }
-
-    def index(
-        self,
-        case_sensitive: bool,
-        diacritics: str,
-        budget: SearchBudget | None = None,
-    ) -> SearchIndex:
-        key = (case_sensitive, diacritics)
-        index = self._variants.get(key)
-        if index is None:
-            with self._variant_lock:
-                index = self._variants.get(key)
-                if index is None:
-                    texts = tuple(
-                        normalize_text(record.text, case_sensitive, diacritics)
-                        for record in self.records
-                    )
-                    postings: dict[str, array] = {}
-                    document_frequency: dict[str, int] = {}
-                    for ordinal, text in enumerate(texts):
-                        if budget is not None:
-                            budget.checkpoint(ordinal)
-                        tokens = _TOKEN.findall(text)
-                        for token in tokens:
-                            postings.setdefault(token, array("I")).append(ordinal)
-                        for token in set(tokens):
-                            document_frequency[token] = document_frequency.get(token, 0) + 1
-                    index = SearchIndex(
-                        texts=texts,
-                        postings=postings,
-                        document_frequency=document_frequency,
-                        build_work_units=self.index_build_work_units,
-                    )
-                    self._variants[key] = index
-        return index
-
-    def resolve_books(
-        self,
-        requested: Sequence[int | str],
-        fallback: Callable[[str], int | None],
-    ) -> frozenset[int]:
-        resolved: set[int] = set()
-        for book in requested:
-            number: int | None
-            if isinstance(book, int):
-                number = book
-            elif book.strip().isdigit():
-                number = int(book.strip())
-            else:
-                normalized = normalize_book_name(book)
-                number = self.book_names.get(normalized)
-                if number is None:
-                    number = fallback(book)
-            if number is None or number not in self.available_books:
-                raise SearchValidationError(
-                    f"Book {book!r} is not available in this translation."
-                )
-            resolved.add(number)
-        return frozenset(resolved)
-
-    @staticmethod
-    def _build_records(data: dict[str, Any]) -> tuple[VerseRecord, ...]:
-        records: list[VerseRecord] = []
-        ordinal = 0
-        try:
-            books = sorted(data["books"], key=lambda item: int(item["nr"]))
-            for book in books:
-                book_nr = int(book["nr"])
-                book_name = str(book["name"])
-                chapters = sorted(book["chapters"], key=lambda item: int(item["chapter"]))
-                for chapter in chapters:
-                    chapter_nr = int(chapter["chapter"])
-                    chapter_name = str(chapter["name"])
-                    verses = sorted(chapter["verses"], key=lambda item: int(item["verse"]))
-                    for verse in verses:
-                        if not all(key in verse for key in ("chapter", "verse", "name", "text")):
-                            raise KeyError("verse")
-                        records.append(
-                            VerseRecord(
-                                ordinal=ordinal,
-                                book_nr=book_nr,
-                                book_name=book_name,
-                                chapter=chapter_nr,
-                                chapter_name=chapter_name,
-                                verse=dict(verse),
-                            )
-                        )
-                        ordinal += 1
-        except (KeyError, TypeError, ValueError) as error:
-            raise CacheIntegrityError("Translation contains invalid book or verse data.") from error
-        return tuple(records)
-
-    @staticmethod
-    def _build_book_names(records: Sequence[VerseRecord]) -> dict[str, int]:
-        names: dict[str, int] = {}
-        for record in records:
-            names[normalize_book_name(record.book_name)] = record.book_nr
-        return names
+    A query mixing scripts yields units of different kinds, each carrying the
+    rules of its own script. That is what stops one Han character from turning
+    a whole query into a substring search, which is how the previous
+    caller-side helper degraded Latin terms.
+    """
+    units: list[QueryUnit] = []
+    offset = 0
+    for family, run in analyzer.runs(query):
+        if family is ScriptFamily.CONTINUOUS:
+            chain = continuous_chain(run)
+            span = len(run)
+            units.append(QueryUnit(run, chain, family, offset, span))
+            offset += span
+        else:
+            units.append(
+                QueryUnit(run, (Token(run, 0, family),), family, offset, 1)
+            )
+            offset += 1
+    return tuple(units)
 
 
 def validate_search_request(
     query: object,
     criteria: SearchBible,
     limits: SearchLimits,
-) -> tuple[str, str, tuple[str, ...], tuple[str, ...], tuple[str, ...]]:
-    """Validate all corpus-independent search limits before repository access."""
+) -> tuple[str, tuple[QueryUnit, ...], tuple[tuple[QueryUnit, ...], ...]]:
+    """Validate every corpus-independent limit before repository access."""
     if not isinstance(query, str):
         raise SearchValidationError("Search query must be a string.")
-    stripped_query = query.strip()
-    if not stripped_query:
+    stripped = query.strip()
+    if not stripped:
         raise SearchValidationError("Search query cannot be empty.")
-    if len(stripped_query) > limits.max_query_length:
+    if len(stripped) > limits.max_query_length:
         raise SearchValidationError(
             f"Search query cannot exceed {limits.max_query_length} characters."
         )
@@ -552,8 +120,7 @@ def validate_search_request(
         )
     if any(len(term) > limits.max_exclusion_length for term in criteria.exclude):
         raise SearchLimitError(
-            "Search exclusions cannot exceed "
-            f"{limits.max_exclusion_length} characters each."
+            f"Search exclusions cannot exceed {limits.max_exclusion_length} characters each."
         )
     if sum(map(len, criteria.exclude)) > limits.max_exclusions_length:
         raise SearchLimitError(
@@ -561,48 +128,61 @@ def validate_search_request(
             f"{limits.max_exclusions_length} characters in total."
         )
 
-    normalized_query = normalize_text(
-        stripped_query,
-        criteria.case_sensitive,
-        criteria.diacritics,
+    analyzer = Analyzer(
+        case_sensitive=criteria.case_sensitive,
+        fold_diacritics=criteria.fold_diacritics,
     )
-    query_terms = tuple(_TOKEN.findall(normalized_query))
-    if not query_terms:
+    units = analyze_query(analyzer, stripped)
+    if not units:
         raise SearchValidationError("Search query must contain letters or numbers.")
-    if len(query_terms) > limits.max_query_terms:
+    if len(units) > limits.max_query_terms:
         raise SearchValidationError(
             f"Search query cannot exceed {limits.max_query_terms} terms."
         )
     if criteria.words != "phrase":
-        query_terms = tuple(dict.fromkeys(query_terms))
-    excluded = tuple(
-        normalize_text(term, criteria.case_sensitive, criteria.diacritics)
-        for term in criteria.exclude
+        units = tuple({unit.text: unit for unit in units}.values())
+
+    exclusions = tuple(
+        analyze_query(analyzer, term) for term in criteria.exclude
     )
-    excluded_terms = tuple(token for value in excluded for token in _TOKEN.findall(value))
-    if len(excluded_terms) > limits.max_exclusion_terms:
+    excluded_units = sum(len(group) for group in exclusions)
+    if excluded_units > limits.max_exclusion_terms:
         raise SearchLimitError(
             "Search exclusions cannot contain more than "
             f"{limits.max_exclusion_terms} terms."
         )
-    if criteria.match == "substring" and any(
-        len(_GRAPHEME.findall(term)) < limits.min_substring_length
-        and not allows_short_substring(term)
-        for term in (*query_terms, *excluded_terms)
-    ):
-        raise SearchValidationError(
-            "Substring search terms must contain at least "
-            f"{limits.min_substring_length} characters unless they use a "
-            "supported continuous-writing script."
-        )
-    return stripped_query, normalized_query, query_terms, excluded, excluded_terms
+    _validate_substring_length(criteria, limits, units, exclusions)
+    return stripped, units, exclusions
+
+
+def _validate_substring_length(
+    criteria: SearchBible,
+    limits: SearchLimits,
+    units: Sequence[QueryUnit],
+    exclusions: Sequence[Sequence[QueryUnit]],
+) -> None:
+    """Guard open-ended substring scans on space-delimited scripts only.
+
+    A one- or two-letter Latin fragment matches inside a large share of the
+    vocabulary and is rarely what a reader means. The same length in Han,
+    Hangul, Thai or Hebrew is an ordinary word, so the minimum does not apply
+    there — the index answers those exactly, without scanning.
+    """
+    if criteria.match != "substring":
+        return
+    everything = [*units, *(unit for group in exclusions for unit in group)]
+    for unit in everything:
+        if unit.family is not ScriptFamily.ALPHABETIC:
+            continue
+        if len(unit.text) < limits.min_substring_length:
+            raise SearchValidationError(
+                "Substring search terms must contain at least "
+                f"{limits.min_substring_length} characters in space-delimited scripts."
+            )
 
 
 class SearchEngine:
     """Execute criteria against a loaded translation corpus."""
-
-    MAX_QUERY_LENGTH = 500
-    MAX_QUERY_TERMS = 64
 
     def __init__(
         self,
@@ -613,7 +193,7 @@ class SearchEngine:
         self.corpus = corpus
         self.book_number = book_number
         self.limits = limits or SearchLimits()
-        self.execution_info: dict[str, int | float | bool] = {}
+        self.execution_info: dict[str, int | float | bool | str] = {}
 
     def search(
         self,
@@ -621,139 +201,194 @@ class SearchEngine:
         criteria: SearchBible,
     ) -> tuple[list[SearchHit], int]:
         budget = SearchBudget(self.limits)
-        query, normalized_query, query_terms, excluded, excluded_terms = (
-            validate_search_request(query, criteria, self.limits)
-        )
+        _, units, exclusions = validate_search_request(query, criteria, self.limits)
         book_filter = self._book_filter(criteria)
-        budget.reserve(
-            self.corpus.index_build_work_units
-            + len(self.corpus.records)
-            + (criteria.limit * 8)
-        )
+        # A search over N verses cannot cost less than N, and that floor is
+        # known without touching the index. Checking it first keeps a request
+        # with an unusable budget from triggering an index build.
+        budget.reserve(len(self.corpus.records) + criteria.limit * 8)
         index = self.corpus.index(
-            criteria.case_sensitive,
-            criteria.diacritics,
-            budget,
+            criteria.case_sensitive, criteria.fold_diacritics, self.limits
         )
-        budget.reserve(
-            self._estimate_work(
-                index,
-                query_terms,
-                excluded_terms,
-                book_filter,
-                criteria,
-                budget,
-            )
-        )
-        if (
-            len(query_terms) == 1
-            and criteria.match == "whole_word"
-            and not excluded
-            and criteria.proximity is None
-            and criteria.sort == "canonical"
-        ):
-            result = self._single_term_search(
-                index, query_terms[0], book_filter, criteria, budget
-            )
-            self._finish_execution(budget, criteria)
-            return result
+        budget.reserve(self._estimate_work(index, units, exclusions, criteria))
 
-        matcher = _Matcher(criteria, normalized_query, query_terms, excluded, budget)
-        eligible = None
-        if book_filter != self.corpus.available_books:
-            selected_ordinals: set[int] = set()
-            for ordinal, record in enumerate(self.corpus.records):
-                budget.checkpoint(ordinal)
-                if record.book_nr in book_filter:
-                    selected_ordinals.add(record.ordinal)
-            eligible = frozenset(selected_ordinals)
-        matched = matcher.search(index, eligible)
-        hits = [
-            SearchHit(self.corpus.records[ordinal], score, occurrences, terms)
-            for ordinal, (score, occurrences, terms) in sorted(matched.items())
-        ]
+        resolved = [self._resolve(index, unit, criteria, budget) for unit in units]
+        matched = self._combine(resolved, units, criteria, budget)
+        matched = self._apply_exclusions(index, matched, exclusions, criteria, budget)
+        if criteria.proximity is not None:
+            matched = self._apply_proximity(matched, resolved, units, criteria, budget)
+
+        eligible = self._eligible_ordinals(book_filter, budget)
+        hits: list[SearchHit] = []
+        for position, (ordinal, (occurrences, terms)) in enumerate(sorted(matched.items())):
+            budget.checkpoint(position)
+            if eligible is not None and ordinal not in eligible:
+                continue
+            hits.append(
+                SearchHit(
+                    record=self.corpus.records[ordinal],
+                    score=occurrences,
+                    occurrences=occurrences,
+                    terms=terms,
+                )
+            )
 
         if criteria.sort == "relevance":
             hits.sort(key=lambda hit: (-hit.score, hit.record.ordinal))
         total = len(hits)
-        result = hits[criteria.offset:criteria.offset + criteria.limit], total
-        self._finish_execution(budget, criteria)
-        return result
+        page = hits[criteria.offset:criteria.offset + criteria.limit]
+        self._finish_execution(budget, criteria, index)
+        return page, total
 
-    def _single_term_search(
+    def _resolve(
         self,
         index: SearchIndex,
-        term: str,
-        book_filter: frozenset[int],
+        unit: QueryUnit,
         criteria: SearchBible,
         budget: SearchBudget,
-    ) -> tuple[list[SearchHit], int]:
-        selected: list[SearchHit] = []
-        whole_corpus = book_filter == self.corpus.available_books
-        total = index.document_frequency.get(term, 0) if whole_corpus else 0
-        matched_position = 0
-        page_end = criteria.offset + criteria.limit
-        for ordinal, occurrences_group in groupby(index.postings.get(term, ())):
-            budget.checkpoint(matched_position)
-            occurrences = sum(1 for _ in occurrences_group)
-            record = self.corpus.records[ordinal]
-            if record.book_nr not in book_filter:
-                continue
-            if criteria.offset <= matched_position < page_end:
-                selected.append(
-                    SearchHit(
-                        record=record,
-                        score=occurrences,
-                        occurrences=occurrences,
-                        terms=(term,),
-                    )
+    ) -> dict[int, list[int]]:
+        """Return, per verse, the positions where this unit occurs."""
+        budget.check_deadline()
+        if unit.continuous:
+            # Continuous scripts have no word boundary to respect, so
+            # whole-word and substring resolve identically and exactly.
+            return chain_matches(index, unit.tokens)
+        if criteria.match == "whole_word":
+            return _positions_of(index, unit.text)
+        found: dict[int, list[int]] = {}
+        for position, term in enumerate(index.terms_containing(unit.text)):
+            budget.checkpoint(position)
+            for ordinal, positions in _positions_of(index, term).items():
+                found.setdefault(ordinal, []).extend(positions)
+        for positions in found.values():
+            positions.sort()
+        return found
+
+    def _combine(
+        self,
+        resolved: Sequence[dict[int, list[int]]],
+        units: Sequence[QueryUnit],
+        criteria: SearchBible,
+        budget: SearchBudget,
+    ) -> dict[int, tuple[int, tuple[str, ...]]]:
+        if not resolved:
+            return {}
+        if criteria.words == "any":
+            candidates: set[int] = set()
+            for found in resolved:
+                candidates |= set(found)
+        else:
+            candidates = set(resolved[0])
+            for found in resolved[1:]:
+                candidates &= set(found)
+                if not candidates:
+                    return {}
+        if criteria.words == "phrase":
+            aligned: set[int] = set()
+            for position, ordinal in enumerate(sorted(candidates)):
+                budget.checkpoint(position)
+                if _phrase_aligned(resolved, units, ordinal):
+                    aligned.add(ordinal)
+            candidates = aligned
+
+        matched: dict[int, tuple[int, tuple[str, ...]]] = {}
+        for position, ordinal in enumerate(sorted(candidates)):
+            budget.checkpoint(position)
+            present = tuple(
+                unit.text
+                for unit, found in zip(units, resolved, strict=True)
+                if ordinal in found
+            )
+            if criteria.words == "phrase":
+                occurrences = _phrase_occurrences(resolved, units, ordinal)
+            else:
+                occurrences = sum(
+                    len(found.get(ordinal, ())) for found in resolved
                 )
-            matched_position += 1
-            if whole_corpus and matched_position >= page_end:
-                break
-        if not whole_corpus:
-            total = matched_position
-        return selected, total
+            if occurrences:
+                matched[ordinal] = (occurrences, present)
+        return matched
+
+    def _apply_exclusions(
+        self,
+        index: SearchIndex,
+        matched: dict[int, tuple[int, tuple[str, ...]]],
+        exclusions: Sequence[Sequence[QueryUnit]],
+        criteria: SearchBible,
+        budget: SearchBudget,
+    ) -> dict[int, tuple[int, tuple[str, ...]]]:
+        if not exclusions or not matched:
+            return matched
+        removed: set[int] = set()
+        for group in exclusions:
+            for unit in group:
+                removed |= set(self._resolve(index, unit, criteria, budget))
+        if not removed:
+            return matched
+        return {
+            ordinal: value
+            for ordinal, value in matched.items()
+            if ordinal not in removed
+        }
+
+    def _apply_proximity(
+        self,
+        matched: dict[int, tuple[int, tuple[str, ...]]],
+        resolved: Sequence[dict[int, list[int]]],
+        units: Sequence[QueryUnit],
+        criteria: SearchBible,
+        budget: SearchBudget,
+    ) -> dict[int, tuple[int, tuple[str, ...]]]:
+        allowed = int(criteria.proximity or 0)
+        near: dict[int, tuple[int, tuple[str, ...]]] = {}
+        for position, (ordinal, value) in enumerate(matched.items()):
+            budget.checkpoint(position)
+            if _within_proximity(resolved, units, ordinal, allowed):
+                near[ordinal] = value
+        return near
+
+    def _eligible_ordinals(
+        self, book_filter: frozenset[int], budget: SearchBudget
+    ) -> frozenset[int] | None:
+        if book_filter == self.corpus.available_books:
+            return None
+        selected: set[int] = set()
+        for ordinal, record in enumerate(self.corpus.records):
+            budget.checkpoint(ordinal)
+            if record.book_nr in book_filter:
+                selected.add(record.ordinal)
+        return frozenset(selected)
 
     def _estimate_work(
         self,
         index: SearchIndex,
-        query_terms: tuple[str, ...],
-        excluded_terms: tuple[str, ...],
-        book_filter: frozenset[int],
+        units: Sequence[QueryUnit],
+        exclusions: Sequence[Sequence[QueryUnit]],
         criteria: SearchBible,
-        budget: SearchBudget,
     ) -> int:
-        terms = (*query_terms, *excluded_terms)
-        units = index.build_work_units
-        if book_filter != self.corpus.available_books:
-            units += len(self.corpus.records)
+        """Cost a search from postings lengths rather than by rehearsing it.
 
-        if criteria.match == "substring":
-            for position, (token, ordinals) in enumerate(index.postings.items()):
-                budget.checkpoint(position)
-                for term in terms:
-                    occurrences = token.count(term)
-                    units += 1 + len(token)
-                    if occurrences:
-                        units += len(ordinals) * occurrences
-                    if units > budget.limits.max_work_units:
-                        budget.reserve(units)
-            if criteria.words == "phrase":
-                units += sum(len(text) for text in index.texts)
-        else:
-            units += sum(len(index.postings.get(term, ())) for term in terms)
-            if criteria.words == "phrase":
-                units += sum(len(index.postings.get(term, ())) for term in query_terms)
-
-        if criteria.proximity is not None:
-            units += len(self.corpus.records) * max(1, len(query_terms))
+        The previous estimator walked the whole vocabulary for every term,
+        which cost more than the search it was protecting. Postings lengths are
+        already known, so the estimate is a handful of dictionary lookups.
+        """
+        units_cost = 0
+        for unit in (*units, *(unit for group in exclusions for unit in group)):
+            if unit.continuous:
+                units_cost += sum(len(index.get(token.term) or ()) for token in unit.tokens)
+            elif criteria.match == "substring":
+                # Candidate generation is bounded by the term dictionary, but
+                # only the fragment's trigram buckets are ever visited.
+                units_cost += len(index.postings) // max(1, len(unit.text))
+            else:
+                units_cost += len(index.get(unit.text) or ())
         if criteria.sort == "relevance":
-            units += len(self.corpus.records) * max(1, len(self.corpus.records).bit_length())
-        units += criteria.limit * 8
-        return units
+            units_cost += len(self.corpus.records).bit_length() * max(1, len(units))
+        return units_cost + criteria.limit * 8 + len(units)
 
-    def _finish_execution(self, budget: SearchBudget, criteria: SearchBible) -> None:
+    def _finish_execution(
+        self, budget: SearchBudget, criteria: SearchBible, index: SearchIndex
+    ) -> None:
         budget.check_deadline()
         self.execution_info = {
             "engine_version": SEARCH_ENGINE_VERSION,
@@ -761,6 +396,7 @@ class SearchEngine:
             "deadline_seconds": float(self.limits.deadline_seconds),
             "elapsed_seconds": budget.elapsed_seconds,
             "expensive": criteria.expensive,
+            "script": index.dominant_family.value,
         }
 
     def _book_filter(self, criteria: SearchBible) -> frozenset[int]:
@@ -772,207 +408,123 @@ class SearchEngine:
             scoped = {book for book in self.corpus.available_books if book >= 67}
         else:
             scoped = set(self.corpus.available_books)
-
         if criteria.books:
-            requested = self.corpus.resolve_books(criteria.books, self.book_number)
-            scoped.intersection_update(requested)
+            scoped.intersection_update(
+                self.corpus.resolve_books(criteria.books, self.book_number)
+            )
         return frozenset(scoped)
 
 
-class _Matcher:
-    def __init__(
-        self,
-        criteria: SearchBible,
-        query: str,
-        terms: tuple[str, ...],
-        excluded: tuple[str, ...],
-        budget: SearchBudget,
-    ) -> None:
-        self.criteria = criteria
-        self.query = query
-        self.terms = terms
-        self.excluded = excluded
-        self.budget = budget
-        self.excluded_tokens = tuple(
-            dict.fromkeys(
-                token for value in excluded for token in _TOKEN.findall(value)
-            )
-        )
-        self.phrase_pattern = self._phrase_pattern(terms)
-
-    def search(
-        self,
-        index: SearchIndex,
-        eligible: frozenset[int] | None,
-    ) -> dict[int, tuple[int, int, tuple[str, ...]]]:
-        if self.criteria.words == "phrase":
-            matches = self._phrase_matches(index, eligible)
-        else:
-            matches = self._word_matches(index, eligible)
-
-        excluded = self._excluded_ordinals(index)
-        for position, ordinal in enumerate(excluded):
-            self.budget.checkpoint(position)
-            matches.pop(ordinal, None)
-
-        if self.criteria.proximity is not None:
-            nearby: dict[int, tuple[int, int, tuple[str, ...]]] = {}
-            for position, (ordinal, match) in enumerate(matches.items()):
-                self.budget.checkpoint(position)
-                if self._within_proximity(index.texts[ordinal]):
-                    nearby[ordinal] = match
-            matches = nearby
-        return matches
-
-    def _phrase_matches(
-        self,
-        index: SearchIndex,
-        eligible: frozenset[int] | None,
-    ) -> dict[int, tuple[int, int, tuple[str, ...]]]:
-        if self.criteria.match == "substring":
-            candidates = eligible if eligible is not None else range(len(index.texts))
-        else:
-            posting_sets = [set(index.postings.get(term, ())) for term in self.terms]
-            if not posting_sets or any(not values for values in posting_sets):
-                return {}
-            candidates = set.intersection(*posting_sets)
-            if eligible is not None:
-                candidates.intersection_update(eligible)
-
-        matches: dict[int, tuple[int, int, tuple[str, ...]]] = {}
-        for position, ordinal in enumerate(candidates):
-            self.budget.checkpoint(position)
-            text = index.texts[ordinal]
-            occurrences = (
-                text.count(self.query)
-                if self.criteria.match == "substring"
-                else len(self.phrase_pattern.findall(text))
-            )
-            if occurrences:
-                score = occurrences * max(1, len(self.terms))
-                matches[ordinal] = (score, occurrences, self.terms)
-        return matches
-
-    def _word_matches(
-        self,
-        index: SearchIndex,
-        eligible: frozenset[int] | None,
-    ) -> dict[int, tuple[int, int, tuple[str, ...]]]:
-        per_term = [self._posting_counts(index, term) for term in self.terms]
-        ordinal_sets = [set(counts) for counts in per_term]
-        if self.criteria.words == "all":
-            if any(not values for values in ordinal_sets):
-                return {}
-            candidates = set.intersection(*ordinal_sets)
-        else:
-            candidates = set.union(*ordinal_sets) if ordinal_sets else set()
-        if eligible is not None:
-            candidates.intersection_update(eligible)
-
-        matches: dict[int, tuple[int, int, tuple[str, ...]]] = {}
-        for position, ordinal in enumerate(candidates):
-            self.budget.checkpoint(position)
-            counts = tuple(values.get(ordinal, 0) for values in per_term)
-            terms = tuple(
-                term
-                for term, count in zip(self.terms, counts, strict=True)
-                if count > 0
-            )
-            occurrences = sum(counts)
-            matches[ordinal] = (occurrences, occurrences, terms)
-        return matches
-
-    def _posting_counts(self, index: SearchIndex, term: str) -> Counter[int]:
-        if self.criteria.match == "whole_word":
-            return Counter(index.postings.get(term, ()))
-        counts: Counter[int] = Counter()
-        for position, (token, ordinals) in enumerate(index.postings.items()):
-            self.budget.checkpoint(position)
-            occurrences = token.count(term)
-            if occurrences:
-                for ordinal in ordinals:
-                    counts[ordinal] += occurrences
-        return counts
-
-    def _excluded_ordinals(self, index: SearchIndex) -> set[int]:
-        excluded: set[int] = set()
-        for position, term in enumerate(self.excluded_tokens):
-            self.budget.checkpoint(position)
-            excluded.update(self._posting_counts(index, term))
-        return excluded
-
-    def _within_proximity(self, text: str) -> bool:
-        wanted: dict[str, int] = {}
-        for term in self.terms:
-            wanted[term] = wanted.get(term, 0) + 1
-        positions = [match.group() for match in _TOKEN.finditer(text)]
-        counts: dict[str, int] = {}
-        left = 0
-        satisfied = 0
-        required = len(wanted)
-        for right, token in enumerate(positions):
-            self.budget.checkpoint(right)
-            if token in wanted:
-                counts[token] = counts.get(token, 0) + 1
-                if counts[token] == wanted[token]:
-                    satisfied += 1
-            while satisfied == required and left <= right:
-                window_size = right - left + 1
-                if window_size - len(self.terms) <= int(self.criteria.proximity):
-                    return True
-                left_token = positions[left]
-                if left_token in wanted:
-                    if counts[left_token] == wanted[left_token]:
-                        satisfied -= 1
-                    counts[left_token] -= 1
-                left += 1
-        return False
-
-    def _phrase_pattern(self, terms: Sequence[str]) -> regex.Pattern[str]:
-        separator = rf"[^{_WORD_CHARACTER_CLASS}]+"
-        body = separator.join(regex.escape(term) for term in terms)
-        return regex.compile(
-            rf"(?<![{_WORD_CHARACTER_CLASS}]){body}(?![{_WORD_CHARACTER_CLASS}])"
-        )
+def _positions_of(index: SearchIndex, term: str) -> dict[int, list[int]]:
+    postings = index.get(term)
+    if postings is None:
+        return {}
+    found: dict[int, list[int]] = {}
+    for offset, ordinal in enumerate(postings.ordinals):
+        found.setdefault(ordinal, []).append(postings.positions[offset])
+    return found
 
 
-def normalize_text(text: str, case_sensitive: bool, diacritics: str) -> str:
-    value = unicodedata.normalize("NFC", text)
-    value = " ".join(value.split())
-    if diacritics == "insensitive":
-        value = "".join(
-            character
-            for character in unicodedata.normalize("NFD", value)
-            if unicodedata.category(character) != "Mn"
-        )
-        value = unicodedata.normalize("NFC", value)
-    return value if case_sensitive else value.casefold()
+def _phrase_aligned(
+    resolved: Sequence[dict[int, list[int]]],
+    units: Sequence[QueryUnit],
+    ordinal: int,
+) -> bool:
+    """Return whether the units occur in the verse at the query's spacing."""
+    return bool(_phrase_starts(resolved, units, ordinal))
 
 
-def allows_short_substring(term: str) -> bool:
-    """Return whether a term uses scripts where short units carry word meaning.
+def _phrase_occurrences(
+    resolved: Sequence[dict[int, list[int]]],
+    units: Sequence[QueryUnit],
+    ordinal: int,
+) -> int:
+    return len(_phrase_starts(resolved, units, ordinal))
 
-    Han, Japanese kana, Hangul, and Unicode complex-context scripts cannot
-    always rely on spaces to delimit every searchable unit. Restricting these
-    terms to the global substring minimum would reject ordinary one- or
-    two-character searches. Mixed Latin/script tokens stay subject to the
-    global minimum.
+
+def _phrase_starts(
+    resolved: Sequence[dict[int, list[int]]],
+    units: Sequence[QueryUnit],
+    ordinal: int,
+) -> list[int]:
+    """Positions where the whole phrase begins in one verse.
+
+    Each unit must sit exactly as far from the first unit as it did in the
+    query. Because a continuous run occupies one position per character and a
+    word occupies one, the same arithmetic spans a phrase that crosses scripts.
     """
-    return bool(_SHORT_SUBSTRING_TERM.fullmatch(term))
+    base = units[0].offset
+    starts: set[int] | None = None
+    for unit, found in zip(units, resolved, strict=True):
+        positions = found.get(ordinal)
+        if not positions:
+            return []
+        shift = unit.offset - base
+        current = {position - shift for position in positions}
+        starts = current if starts is None else (starts & current)
+        if not starts:
+            return []
+    return sorted(starts or ())
+
+
+def _within_proximity(
+    resolved: Sequence[dict[int, list[int]]],
+    units: Sequence[QueryUnit],
+    ordinal: int,
+    allowed: int,
+) -> bool:
+    """Return whether every unit fits inside one window in this verse."""
+    groups = [found.get(ordinal) or [] for found in resolved]
+    if any(not group for group in groups):
+        return False
+    span = sum(unit.span for unit in units)
+    for start in groups[0]:
+        lower = upper = start
+        chosen = True
+        for group in groups[1:]:
+            nearest = min(group, key=lambda value: abs(value - start))
+            lower = min(lower, nearest)
+            upper = max(upper, nearest)
+            if upper - lower + 1 - span > allowed:
+                chosen = False
+                break
+        if chosen:
+            return True
+    return False
+
+
+def merged_terms(units: Iterable[QueryUnit]) -> tuple[str, ...]:
+    return tuple(unit.text for unit in units)
 
 
 def requires_substring_matching(query: str) -> bool:
-    """Return whether a query contains text without reliable space boundaries.
+    """Deprecated. Always ``False``.
 
-    Applications that provide a search-engine-style default can use this
-    helper to convert ``whole_word`` to ``substring`` without maintaining
-    their own incomplete script detector. Explicit Librarian match modes
-    remain deterministic and are never silently rewritten.
+    Kept so existing integrations keep importing successfully. Continuous
+    scripts no longer need a caller-selected match mode: the engine analyses
+    every script correctly under the default criteria, so an application that
+    still calls this now receives an answer that leaves its search unchanged.
+    Delete the call.
     """
     if not isinstance(query, str):
         raise TypeError("query must be a string.")
-    return bool(_CONTINUOUS_WRITING_SCRIPT.search(query))
+    return False
 
 
-def normalize_book_name(name: str) -> str:
-    return "".join(normalize_text(name, False, "insensitive").replace(".", "").split())
+def allows_short_substring(term: str) -> bool:
+    """Deprecated. Reports whether the substring minimum is waived for a term."""
+    if not isinstance(term, str):
+        raise TypeError("term must be a string.")
+    analyzer = Analyzer()
+    runs = analyzer.runs(term)
+    return bool(runs) and all(
+        family is not ScriptFamily.ALPHABETIC for family, _ in runs
+    )
+
+
+__all__ += [
+    "allows_short_substring",
+    "merged_terms",
+    "normalize_text",
+    "requires_substring_matching",
+]

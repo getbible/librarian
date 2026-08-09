@@ -12,7 +12,6 @@ from getbible import (
     SearchValidationError,
     requires_substring_matching,
 )
-from getbible.search.engine import _Matcher
 
 FIXTURE_REPOSITORY = Path(__file__).parent / "fixtures" / "multilingual_repository"
 
@@ -70,22 +69,15 @@ class TestMultilingualSearchLimits(unittest.TestCase):
         valid_translation.assert_not_called()
         load_translation.assert_not_called()
 
-    def test_combining_marks_cannot_pad_a_short_arabic_substring(self) -> None:
+    def test_abjad_substrings_are_not_subject_to_the_latin_floor(self) -> None:
+        # A two-letter Arabic or Hebrew fragment is an ordinary word, and the
+        # index answers it exactly instead of scanning, so the floor that keeps
+        # open-ended Latin scans in check does not apply.
         bible = self._bible()
 
-        with (
-            patch.object(bible, "valid_translation") as valid_translation,
-            patch.object(bible._translation_cache, "load") as load_translation,
-            self.assertRaises(SearchValidationError),
-        ):
-            bible.search(
-                "فِي",
-                "multi",
-                SearchBible(match="substring"),
-            )
+        response = bible.search("فِي", "multi", SearchBible(match="substring"))
 
-        valid_translation.assert_not_called()
-        load_translation.assert_not_called()
+        self.assertEqual(response["query"]["total"], 2)
 
     def test_standalone_combining_marks_are_not_search_terms(self) -> None:
         bible = self._bible()
@@ -100,31 +92,23 @@ class TestMultilingualSearchLimits(unittest.TestCase):
         valid_translation.assert_not_called()
         load_translation.assert_not_called()
 
-    def test_public_helper_detects_continuous_writing_scripts(self) -> None:
-        self.assertEqual(SEARCH_ENGINE_VERSION, 2)
+    def test_the_deprecated_match_mode_helper_no_longer_asks_for_anything(
+        self,
+    ) -> None:
+        # 1.x asked applications to detect continuous scripts and switch to
+        # substring. The engine derives that itself now, so the helper reports
+        # that no caller-side change is required, for every script.
+        self.assertEqual(SEARCH_ENGINE_VERSION, 3)
 
-        detected = {
+        for script, query in {
             "Han": "神",
             "Hiragana": "め",
-            "Katakana": "カー",
             "Thai": "ใน",
-            "Lao": "ໃນ",
-            "Khmer": "ការ",
-            "Myanmar": "အစ",
-            "Buginese": "ᨠᨱ",
-        }
-        not_detected = {
             "Hangul": "한글",
             "Arabic": "العربية",
             "Hebrew": "עברית",
-            "Devanagari": "देव",
             "Latin": "faith",
-        }
-
-        for script, query in detected.items():
-            with self.subTest(script=script):
-                self.assertTrue(requires_substring_matching(query))
-        for script, query in not_detected.items():
+        }.items():
             with self.subTest(script=script):
                 self.assertFalse(requires_substring_matching(query))
 
@@ -148,23 +132,29 @@ class TestMultilingualSearchLimits(unittest.TestCase):
                     limits.max_work_units,
                 )
 
-    def test_pathological_multiterm_scan_is_rejected_before_matching(self) -> None:
+    def test_many_continuous_terms_stay_inside_a_tight_budget(self) -> None:
+        # Under 1.x this query forced a vocabulary scan per term and was
+        # rejected. Positional postings answer it exactly and cheaply, so it
+        # now succeeds well inside the same budget.
         limits = SearchLimits(max_work_units=4_000)
         bible = self._bible(limits)
         bible.warm_translation("multi")
         query = "神 爱 天 地 起 初 生 命 道 光 日 月 人 子 王 国"
 
-        with (
-            patch.object(_Matcher, "search", wraps=_Matcher.search) as match,
-            self.assertRaisesRegex(SearchLimitError, "configured maximum"),
-        ):
-            bible.search(
-                query,
-                "multi",
-                SearchBible(words="any", match="substring"),
-            )
+        response = bible.search(query, "multi", SearchBible(words="any"))
 
-        match.assert_not_called()
+        self.assertEqual(response["query"]["total"], 5)
+        self.assertLessEqual(
+            response["query"]["cost"]["work_units"], limits.max_work_units
+        )
+
+    def test_an_unusable_work_budget_is_refused_before_an_index_is_built(
+        self,
+    ) -> None:
+        bible = self._bible(SearchLimits(max_work_units=1))
+
+        with self.assertRaisesRegex(SearchLimitError, "configured maximum"):
+            bible.search("神", "multi")
 
 
 if __name__ == "__main__":
