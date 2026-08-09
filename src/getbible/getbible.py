@@ -31,6 +31,7 @@ from .search import (
     SearchHit,
     SearchLimits,
     TranslationCorpus,
+    shared_registry,
 )
 from .source_generation import PurgeCallback, SourceCoordinator, SourceGeneration
 from .translation_cache import TranslationCache
@@ -143,6 +144,10 @@ class GetBible:
             require_checksums=self._require_checksums,
         )
         self._search_corpora: OrderedDict[str, TranslationCorpus] = OrderedDict()
+        # Corpora are shared process-wide, keyed by the repository they came
+        # from so two clients pointed at different repositories never collide.
+        self._repository_key = f"{self._repository.repo_path}/{self._repository.version}"
+        self._corpus_registry = shared_registry()
         self._source_coordinator = SourceCoordinator(
             cache_root=self._translation_cache.cache_dir,
             source=self._repository.repo_path,
@@ -227,9 +232,9 @@ class GetBible:
         abbreviation: str | None = "kjv",
         *,
         case_sensitive: bool = False,
-        diacritics: str = "sensitive",
+        diacritics: str = "fold",
     ) -> dict[str, Any]:
-        """Load one translation corpus and normalized index before traffic.
+        """Load one translation corpus and analysed index before traffic.
 
         This method performs no artificial query and returns operational metadata
         only. Call it before a pre-fork server creates workers when copy-on-write
@@ -246,8 +251,14 @@ class GetBible:
                 corpus = self._search_corpus(code)
             except RepositoryResourceNotFound as error:
                 raise FileNotFoundError(f"Translation ({code}) not found.") from error
-            corpus.index(criteria.case_sensitive, criteria.diacritics)
-            return {"abbreviation": code, **corpus.cache_info()}
+            index = corpus.index(
+                criteria.case_sensitive, criteria.fold_diacritics, self.search_limits
+            )
+            return {
+                "abbreviation": code,
+                **corpus.cache_info(),
+                "analysis": index.analysis_report(),
+            }
 
     def cache_info(self) -> dict[str, Any]:
         """Return bounded-cache state and counters without exposing payloads."""
@@ -365,36 +376,34 @@ class GetBible:
         return time.monotonic() - entry.loaded_at < self._cache_ttl_seconds
 
     def _search_corpus(self, abbreviation: str) -> TranslationCorpus:
-        snapshot = self._translation_cache.load(abbreviation)
-        with self._cache_guard:
-            corpus = self._search_corpora.get(abbreviation)
-        if corpus is not None and corpus.sha == snapshot.sha:
-            corpus.refresh_state(snapshot)
-            with self._cache_guard:
-                self._search_corpora.move_to_end(abbreviation)
-                self._cache_stats["search_corpora"].hits += 1
-            return corpus
+        """Return the corpus for one translation, shared across this process.
 
+        Corpora live in a registry keyed by repository, translation and source
+        SHA rather than on this object, so two ``GetBible`` instances in one
+        process reach the same parsed verses and the same analysed indexes. A
+        service therefore pays the parse-and-analyse cost once per translation
+        version, not once per client object.
+        """
+        snapshot = self._translation_cache.load(abbreviation)
+        registry = self._corpus_registry
+        before = registry.misses
         with self._resource_locks.hold(f"translation:{abbreviation}"):
-            with self._cache_guard:
-                corpus = self._search_corpora.get(abbreviation)
-            if corpus is not None and corpus.sha == snapshot.sha:
-                corpus.refresh_state(snapshot)
-                with self._cache_guard:
-                    self._search_corpora.move_to_end(abbreviation)
-                    self._cache_stats["search_corpora"].hits += 1
-                return corpus
-            corpus = TranslationCorpus(snapshot)
-            with self._cache_guard:
-                self._cache_stats["search_corpora"].misses += 1
-                self._put_bounded(
-                    self._search_corpora,
-                    abbreviation,
-                    corpus,
-                    self._search_corpus_limit,
-                    "search_corpora",
-                )
-            return corpus
+            corpus = registry.acquire(self._repository_key, abbreviation, snapshot)
+        with self._cache_guard:
+            counters = self._cache_stats["search_corpora"]
+            if registry.misses == before:
+                counters.hits += 1
+            else:
+                counters.misses += 1
+            self._search_corpora[abbreviation] = corpus
+            self._search_corpora.move_to_end(abbreviation)
+            while (
+                self._search_corpus_limit is not None
+                and len(self._search_corpora) > self._search_corpus_limit
+            ):
+                self._search_corpora.popitem(last=False)
+                counters.evictions += 1
+        return corpus
 
     @staticmethod
     def _search_response(
@@ -468,6 +477,9 @@ class GetBible:
                     "checked_at": checked_at,
                     "stale": stale,
                 },
+                # How this translation was read. Exposed so an application can
+                # see the engine's choice rather than having to make it.
+                "analysis": {"script": execution_info["script"]},
                 "cost": {
                     "work_units": execution_info["work_units"],
                     "deadline_seconds": execution_info["deadline_seconds"],

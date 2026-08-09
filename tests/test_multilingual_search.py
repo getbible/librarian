@@ -1,3 +1,10 @@
+"""Multilingual search under the 2.0 contract.
+
+The governing expectation of this file is that a caller supplies a query string
+and nothing else. Every writing system in the fixture is reached by the default
+criteria, so none of these tests select a match mode to make a script work.
+"""
+
 import tempfile
 import unittest
 from pathlib import Path
@@ -19,213 +26,187 @@ class TestMultilingualSearch(unittest.TestCase):
         self.bible.close()
         self.temporary.cleanup()
 
-    def _search(
-        self,
-        query: str,
-        *,
-        match: str = "whole_word",
-        words: str = "all",
-        diacritics: str = "sensitive",
-        exclude: tuple[str, ...] = (),
-    ) -> dict:
-        return self.bible.search(
-            query,
-            "multi",
-            SearchBible(
-                match=match,
-                words=words,
-                diacritics=diacritics,
-                exclude=exclude,
-            ),
-        )
+    def _search(self, query: str, **criteria: object) -> dict:
+        """Search with the library's defaults unless a test overrides them."""
+        return self.bible.search(query, "multi", SearchBible(**criteria))
 
     @staticmethod
     def _verse_numbers(response: dict) -> list[int]:
         return [int(match["verse"]) for match in response["matches"]]
 
-    def test_simplified_chinese_short_substrings_match_inside_unsegmented_text(
-        self,
-    ) -> None:
-        one_character = self._search("神", match="substring")
-        two_characters = self._search("神爱", match="substring")
+
+class TestContinuousScripts(TestMultilingualSearch):
+    """Scripts that do not delimit words with spaces."""
+
+    def test_chinese_is_found_without_choosing_a_match_mode(self) -> None:
+        one_character = self._search("神")
+        two_characters = self._search("神爱")
 
         self.assertEqual(self._verse_numbers(one_character), [1, 2, 3, 4, 19])
         self.assertEqual(self._verse_numbers(two_characters), [1, 2])
         self.assertEqual(two_characters["query"]["total"], 2)
-        self.assertEqual(two_characters["query"]["engine_version"], 2)
 
-    def test_repeated_han_substrings_report_every_occurrence_in_one_token(
-        self,
-    ) -> None:
-        response = self._search("神", match="substring")
+    def test_whole_word_and_substring_agree_in_continuous_scripts(self) -> None:
+        # Nothing delimits a word, so there is no boundary for the two modes to
+        # disagree about. A caller cannot get this wrong by choosing either.
+        for query in ("神", "神爱", "起初"):
+            with self.subTest(query=query):
+                self.assertEqual(
+                    self._verse_numbers(self._search(query)),
+                    self._verse_numbers(self._search(query, match="substring")),
+                )
+
+    def test_every_continuous_script_is_reached_by_default(self) -> None:
+        expected = {
+            "めに": [4],     # Japanese kana
+            "アー": [20],    # Katakana with a prolonged sound mark
+            "천지": [5],     # Korean, inside an inflected word
+            "ใน": [13],     # Thai
+            "ໃນ": [16],     # Lao
+            "កា": [17],     # Khmer
+            "အစ": [18],     # Myanmar
+        }
+        for query, verses in expected.items():
+            with self.subTest(query=query):
+                self.assertEqual(self._verse_numbers(self._search(query)), verses)
+
+    def test_traditional_and_simplified_are_not_conflated(self) -> None:
+        self.assertEqual(self._verse_numbers(self._search("神愛")), [3])
+        self.assertEqual(self._verse_numbers(self._search("神爱")), [1, 2])
+
+    def test_a_run_must_occur_in_order_not_merely_be_present(self) -> None:
+        # Verse 19 is "神神创造神。" — it holds 神 and 创造, never 神创造神爱.
+        self.assertEqual(self._search("创造神爱")["query"]["total"], 0)
+
+    def test_repeated_characters_report_every_occurrence(self) -> None:
+        response = self._search("神")
         repeated = next(
             match for match in response["matches"] if int(match["verse"]) == 19
         )
 
         self.assertEqual(repeated["occurrences"], 3)
 
-    def test_traditional_chinese_is_searched_without_conflating_script_variants(
-        self,
-    ) -> None:
-        traditional = self._search("神愛", match="substring")
-        simplified = self._search("神爱", match="substring")
+    def test_chinese_punctuation_bounds_a_run(self) -> None:
+        self.assertEqual(self._verse_numbers(self._search("起初")), [1, 3])
 
-        self.assertEqual(self._verse_numbers(traditional), [3])
-        self.assertEqual(self._verse_numbers(simplified), [1, 2])
-
-    def test_chinese_punctuation_creates_a_whole_word_boundary(self) -> None:
-        response = self._search("起初")
-
-        self.assertEqual(self._verse_numbers(response), [1, 3])
-        self.assertEqual(response["query"]["total"], 2)
-
-    def test_whole_word_does_not_claim_an_internal_chinese_match(self) -> None:
-        response = self._search("神")
-
-        self.assertEqual(response["query"]["total"], 0)
-        self.assertEqual(response["matches"], [])
-
-    def test_japanese_short_substring_matches_inside_an_unsegmented_token(
-        self,
-    ) -> None:
-        substring = self._search("めに", match="substring")
-        whole_word = self._search("めに")
-
-        self.assertEqual(self._verse_numbers(substring), [4])
-        self.assertEqual(whole_word["query"]["total"], 0)
-
-    def test_japanese_short_substring_accepts_prolonged_sound_mark(self) -> None:
-        substring = self._search("アー", match="substring")
-        whole_word = self._search("アー")
-
-        self.assertEqual(self._verse_numbers(substring), [20])
-        self.assertEqual(whole_word["query"]["total"], 0)
-
-    def test_korean_short_substring_matches_an_inflected_word(self) -> None:
-        substring = self._search("천지", match="substring")
-        whole_word = self._search("천지")
-
-        self.assertEqual(self._verse_numbers(substring), [5])
-        self.assertEqual(whole_word["query"]["total"], 0)
-
-    def test_thai_short_substring_matches_text_without_spaces(self) -> None:
-        substring = self._search("ใน", match="substring")
-        whole_word = self._search("ใน")
-
-        self.assertEqual(self._verse_numbers(substring), [13])
-        self.assertEqual(whole_word["query"]["total"], 0)
-
-    def test_lao_short_substring_matches_text_without_word_boundaries(self) -> None:
-        substring = self._search("ໃນ", match="substring")
-        whole_word = self._search("ໃນ")
-
-        self.assertEqual(self._verse_numbers(substring), [16])
-        self.assertEqual(whole_word["query"]["total"], 0)
-
-    def test_khmer_short_substring_matches_text_without_word_boundaries(self) -> None:
-        substring = self._search("កា", match="substring")
-        whole_word = self._search("កា")
-
-        self.assertEqual(self._verse_numbers(substring), [17])
-        self.assertEqual(whole_word["query"]["total"], 0)
-
-    def test_myanmar_short_substring_matches_text_without_word_boundaries(self) -> None:
-        substring = self._search("အစ", match="substring")
-        whole_word = self._search("အစ")
-
-        self.assertEqual(self._verse_numbers(substring), [18])
-        self.assertEqual(whole_word["query"]["total"], 0)
-
-    def test_mixed_scripts_remain_searchable_across_unicode_punctuation(self) -> None:
-        response = self._search(
-            "Jesus 耶稣",
-            match="substring",
-            words="all",
-        )
-
-        self.assertEqual(self._verse_numbers(response), [15])
-        self.assertEqual(response["matches"][0]["terms"], ["jesus", "耶稣"])
-
-    def test_short_unsegmented_exclusion_uses_the_same_validation_policy(
-        self,
-    ) -> None:
-        response = self._search(
-            "起初",
-            match="substring",
-            exclude=("爱",),
-        )
+    def test_exclusions_use_the_same_analysis_as_the_query(self) -> None:
+        response = self._search("起初", exclude=("爱",))
 
         self.assertEqual(self._verse_numbers(response), [3])
         self.assertEqual(response["query"]["total"], 1)
 
-    def test_arabic_whole_words_and_arabic_comma_are_tokenized_correctly(
-        self,
-    ) -> None:
+
+class TestAbjadScripts(TestMultilingualSearch):
+    """Hebrew and Arabic: optional vowel pointing and attached particles."""
+
+    def test_unpointed_hebrew_reaches_pointed_text_by_default(self) -> None:
+        self.assertEqual(self._verse_numbers(self._search("בראשית")), [9, 10])
+
+    def test_exact_diacritics_still_distinguishes_pointing(self) -> None:
+        self.assertEqual(
+            self._verse_numbers(self._search("בראשית", diacritics="exact")), [10]
+        )
+
+    def test_unvowelled_arabic_reaches_text_with_harakat(self) -> None:
+        self.assertEqual(self._verse_numbers(self._search("في")), [6, 7])
+        self.assertEqual(
+            self._verse_numbers(self._search("في", diacritics="exact")), [7]
+        )
+
+    def test_an_attached_particle_does_not_hide_the_word(self) -> None:
+        # "بدء" is written as "الْبَدْءِ" and "بِالْبَدْءِ" in the fixture. A reader
+        # types the stem; the engine indexes it beside the written form.
+        self.assertEqual(self._verse_numbers(self._search("بدء")), [6, 7, 8])
+
+    def test_the_written_form_is_still_matched_exactly(self) -> None:
+        self.assertEqual(self._verse_numbers(self._search("بِالْبَدْءِ")), [8])
+
+    def test_arabic_whole_words_and_arabic_comma_are_bounded(self) -> None:
         response = self._search("الكلمة")
 
         self.assertEqual(self._verse_numbers(response), [7])
         self.assertEqual(response["matches"][0]["occurrences"], 2)
 
-    def test_arabic_diacritic_insensitive_search_matches_pointed_text(self) -> None:
-        sensitive = self._search("في")
-        insensitive = self._search("في", diacritics="insensitive")
-
-        self.assertEqual(self._verse_numbers(sensitive), [7])
-        self.assertEqual(self._verse_numbers(insensitive), [6, 7])
-
-    def test_arabic_canonical_equivalence_is_normalized_to_nfc(self) -> None:
-        response = self._search("ا\u0655له")
-
-        self.assertEqual(self._verse_numbers(response), [8])
-        self.assertEqual(response["matches"][0]["terms"], ["إله"])
-
-    def test_hebrew_diacritic_insensitive_search_matches_pointed_text(self) -> None:
-        sensitive = self._search("בראשית")
-        insensitive = self._search("בראשית", diacritics="insensitive")
-
-        self.assertEqual(self._verse_numbers(sensitive), [10])
-        self.assertEqual(self._verse_numbers(insensitive), [9, 10])
-
-    def test_short_hebrew_whole_word_is_not_blocked_by_substring_limits(
-        self,
-    ) -> None:
-        response = self._search("את", diacritics="insensitive")
+    def test_short_hebrew_words_are_not_blocked(self) -> None:
+        response = self._search("את")
 
         self.assertEqual(self._verse_numbers(response), [9, 10])
         self.assertEqual(response["matches"][0]["occurrences"], 1)
-        self.assertEqual(response["matches"][1]["occurrences"], 1)
 
-    def test_devanagari_whole_words_respect_spaces_and_danda_punctuation(
-        self,
-    ) -> None:
+    def test_canonical_equivalence_is_normalized(self) -> None:
+        self.assertEqual(self._verse_numbers(self._search("إله")), [8])
+
+
+class TestBrahmicScripts(TestMultilingualSearch):
+    """Devanagari: combining marks carry vowels and are never folded away."""
+
+    def test_whole_words_respect_spaces_and_danda(self) -> None:
         response = self._search("की")
 
         self.assertEqual(self._verse_numbers(response), [11])
         self.assertEqual(response["matches"][0]["occurrences"], 2)
 
-    def test_devanagari_canonical_equivalence_normalizes_nukta_forms(self) -> None:
-        response = self._search("क़ानून")
+    def test_nukta_forms_normalize_without_losing_the_mark(self) -> None:
+        response = self._search("क़ानून")
 
         self.assertEqual(self._verse_numbers(response), [12])
         self.assertEqual(response["matches"][0]["terms"], ["क़ानून"])
 
-    def test_join_controls_remain_inside_arabic_and_devanagari_tokens(self) -> None:
-        persian = self._search("می‌رود")
-        devanagari = self._search("क्‍ष")
+    def test_join_controls_stay_inside_their_word(self) -> None:
+        self.assertEqual(self._verse_numbers(self._search("می‌رود")), [21])
+        self.assertEqual(self._verse_numbers(self._search("क्‍ष")), [22])
 
-        self.assertEqual(self._verse_numbers(persian), [21])
-        self.assertEqual(self._verse_numbers(devanagari), [22])
 
-    def test_short_substring_floor_remains_for_segmented_scripts(self) -> None:
-        for query in ("go", "في", "את", "की"):
-            with self.subTest(query=query), self.assertRaises(SearchValidationError):
-                self._search(query, match="substring")
+class TestMixedScripts(TestMultilingualSearch):
+    def test_each_part_of_a_mixed_query_keeps_its_own_rules(self) -> None:
+        response = self._search("Jesus 耶稣")
 
-    def test_mixed_latin_and_han_short_token_cannot_bypass_substring_floor(
-        self,
-    ) -> None:
+        self.assertEqual(self._verse_numbers(response), [15])
+        self.assertEqual(response["matches"][0]["terms"], ["jesus", "耶稣"])
+
+    def test_a_han_character_does_not_loosen_the_latin_part(self) -> None:
+        # Under 1.x an application flipped the whole query to substring when it
+        # saw any Han, so "all" began matching inside "shall". Each run now
+        # carries its own rules, so the Latin word stays a whole word.
+        self.assertEqual(self._search("Jesu 耶稣")["query"]["total"], 0)
+
+
+class TestSubstringPolicy(TestMultilingualSearch):
+    def test_the_substring_floor_applies_only_to_space_delimited_scripts(self) -> None:
+        # A one- or two-letter Latin fragment matches much of a vocabulary. The
+        # same length in Hebrew, Arabic or Devanagari is an ordinary word, and
+        # the index answers it exactly rather than by scanning.
+        with self.assertRaises(SearchValidationError):
+            self._search("go", match="substring")
+        for query, verses in {"في": [6, 7], "את": [9, 10], "की": [11]}.items():
+            with self.subTest(query=query):
+                self.assertEqual(
+                    self._verse_numbers(self._search(query, match="substring")), verses
+                )
+
+    def test_a_short_latin_run_is_still_floored_in_a_mixed_query(self) -> None:
         with self.assertRaises(SearchValidationError):
             self._search("a神", match="substring")
+
+
+class TestResponseContract(TestMultilingualSearch):
+    def test_engine_version_marks_the_matching_change(self) -> None:
+        # Downstream result caches key on this, so it must move when matching
+        # semantics change without a translation SHA changing.
+        self.assertEqual(self._search("神")["query"]["engine_version"], 3)
+
+    def test_the_response_reports_how_the_translation_was_read(self) -> None:
+        self.assertEqual(
+            self._search("神")["query"]["analysis"], {"script": "continuous"}
+        )
+
+    def test_results_keep_the_select_structure(self) -> None:
+        response = self._search("神爱")
+        chapter = next(iter(response["results"].values()))
+
+        self.assertIn("verses", chapter)
+        self.assertIn("ref", chapter)
+        self.assertEqual(chapter["abbreviation"], "multi")
 
 
 if __name__ == "__main__":

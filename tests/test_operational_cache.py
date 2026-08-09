@@ -51,15 +51,18 @@ class OperationalCacheTestCase(unittest.TestCase):
         warmed = bible.warm_translation(
             "test",
             case_sensitive=True,
-            diacritics="insensitive",
+            diacritics="fold",
         )
 
         self.assertEqual(warmed["abbreviation"], "test")
         self.assertEqual(warmed["verses"], 9)
         self.assertEqual(
             warmed["indexes"],
-            [{"case_sensitive": True, "diacritics": "insensitive"}],
+            [{"case_sensitive": True, "fold_diacritics": True}],
         )
+        # Warming reports how the translation reads, so an operator can confirm
+        # the engine's choice before traffic arrives.
+        self.assertEqual(warmed["analysis"]["dominant_script"], "alphabetic")
         self.assertIsInstance(json.dumps(bible.cache_info()), str)
         self.assertEqual(bible.cache_info()["active_resource_locks"], 0)
 

@@ -146,13 +146,27 @@ class TestGetBibleSearch(unittest.TestCase):
         self.assertEqual(by_name["query"]["total"], 1)
         self.assertEqual(by_number["query"]["total"], 2)
 
-    def test_diacritic_insensitive_search(self):
-        sensitive = self.bible.search("Cafe", "test")
-        insensitive = self.bible.search(
-            "Cafe", "test", SearchBible(diacritics="insensitive")
+    def test_accents_are_folded_by_default(self):
+        # A reader typing unaccented text reaches the accented verse without
+        # having to know that a diacritics option exists.
+        folded = self.bible.search("Cafe", "test")
+        exact = self.bible.search("Cafe", "test", SearchBible(diacritics="exact"))
+
+        self.assertEqual(folded["query"]["total"], 1)
+        self.assertEqual(exact["query"]["total"], 0)
+
+    def test_legacy_diacritic_spellings_still_resolve(self):
+        # 1.x spelled these "sensitive" and "insensitive".
+        self.assertEqual(
+            SearchBible(diacritics="insensitive").diacritics, "fold"
         )
-        self.assertEqual(sensitive["query"]["total"], 0)
-        self.assertEqual(insensitive["query"]["total"], 1)
+        self.assertEqual(SearchBible(diacritics="sensitive").diacritics, "exact")
+        self.assertEqual(
+            self.bible.search(
+                "Cafe", "test", SearchBible(diacritics="sensitive")
+            )["query"]["total"],
+            0,
+        )
 
     def test_exclusion_and_proximity(self):
         excluded = self.bible.search(
