@@ -241,8 +241,8 @@ class TestProximityWindows(unittest.TestCase):
     """Proximity must find a qualifying window whenever one exists."""
 
     def setUp(self) -> None:
-        from getbible.search.engine import QueryUnit, _within_proximity
         from getbible.search.analysis import ScriptFamily as SF
+        from getbible.search.engine import QueryUnit, _within_proximity
 
         self.check = _within_proximity
         self.unit = lambda offset: QueryUnit("x", (), SF.ALPHABETIC, offset, 1)
