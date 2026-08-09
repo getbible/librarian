@@ -75,6 +75,14 @@ Run the search benchmark after warming or changing the search engine:
   --translation kjv --query "faith hope" --iterations 10000
 ```
 
+Sweep every writing-system family after changing analysis or the index. A
+search costs what its result set costs, so a family drifting away from the
+others points at an analysis regression:
+
+```bash
+.venv/bin/python benchmarks/search_benchmark.py --sweep --iterations 200
+```
+
 ## Test expectations
 
 - Add offline fixture coverage for every new search criterion or response field.
