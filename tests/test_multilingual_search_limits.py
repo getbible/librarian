@@ -12,7 +12,7 @@ from getbible import (
     SearchValidationError,
     requires_substring_matching,
 )
-from getbible.search import _Matcher
+from getbible.search.engine import _Matcher
 
 FIXTURE_REPOSITORY = Path(__file__).parent / "fixtures" / "multilingual_repository"
 

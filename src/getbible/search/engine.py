@@ -14,13 +14,13 @@ from typing import Any, ClassVar
 
 import regex
 
-from .exceptions import (
+from ..exceptions import (
     CacheIntegrityError,
     SearchDeadlineExceeded,
     SearchLimitError,
     SearchValidationError,
 )
-from .translation_cache import TranslationSnapshot
+from ..translation_cache import TranslationSnapshot
 
 _WORD_START_CHARACTER_CLASS = r"\p{L}\p{N}"
 _WORD_CHARACTER_CLASS = rf"{_WORD_START_CHARACTER_CLASS}\p{{M}}\u200C\u200D"
