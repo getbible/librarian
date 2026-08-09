@@ -1,12 +1,25 @@
 name: Live API Integration
 
 on:
+  pull_request:
+    branches: [master, staging]
+    paths:
+      - ".github/workflows/integration.yml"
+      - "pyproject.toml"
+      - "requirements.txt"
+      - "src/getbible/**"
+      - "tests/test_getbible.py"
+      - "tests/test_live_search.py"
   schedule:
     - cron: "17 3 * * 1"
   workflow_dispatch:
 
 permissions:
   contents: read
+
+concurrency:
+  group: live-api-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   live-api:

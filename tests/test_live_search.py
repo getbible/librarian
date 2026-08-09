@@ -68,6 +68,28 @@ class TestLiveSearch(unittest.TestCase):
 
         self.assertGreater(response["query"]["total"], 0)
         self.assertEqual(response["query"]["analysis"], {"script": "abjad"})
+        self.assertTrue(
+            any(
+                match["book_nr"] == 1
+                and match["chapter"] == 24
+                and match["verse"] == 7
+                for match in response["matches"]
+            )
+        )
+
+    def test_malayalam_brahmic_search(self):
+        response = self.bible.search("ദൈവം", "mal1910")
+
+        self.assertGreater(response["query"]["total"], 0)
+        self.assertEqual(response["query"]["analysis"], {"script": "brahmic"})
+        self.assertTrue(
+            any(
+                match["book_nr"] == 1
+                and match["chapter"] == 1
+                and match["verse"] == 1
+                for match in response["matches"]
+            )
+        )
 
 
 if __name__ == "__main__":

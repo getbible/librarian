@@ -49,6 +49,7 @@ SWEEP = (
     ("continuous", "thai", "\u0e1e\u0e23\u0e30\u0e40\u0e08\u0e49\u0e32"),
     ("abjad", "modernhebrew", "\u05d0\u05dc\u05d4\u05d9\u05dd"),
     ("abjad", "arabicsv", "\u0627\u0644\u0644\u0647"),
+    ("brahmic", "mal1910", "\u0d26\u0d48\u0d35\u0d02"),
 )
 
 

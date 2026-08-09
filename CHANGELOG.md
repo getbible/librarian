@@ -21,7 +21,7 @@ query string; it no longer decides how a writing system should be read.
 - **The substring minimum applies only to space-delimited scripts.** Two
   characters of Han, Hangul, Thai, Hebrew, Arabic or Devanagari are an ordinary
   word, answered exactly by the index rather than by a scan.
-- `SEARCH_ENGINE_VERSION` is `3`. Downstream result caches keyed on it will
+- `SEARCH_ENGINE_VERSION` is `4`. Downstream result caches keyed on it will
   invalidate.
 - `getbible.search` is a package. All public names still import from `getbible`
   and from `getbible.search`.
@@ -58,9 +58,15 @@ query string; it no longer decides how a writing system should be read.
   character, so `all` matched inside `shall`.
 - Work is estimated from postings lengths. The previous estimator walked the
   whole vocabulary once per term and cost more than the search it guarded.
-- An index build no longer runs against the requesting call's deadline. A build
-  that timed out cached nothing, so the next request repeated it and failed the
-  same way.
+- An index build or lock wait no longer consumes the requesting call's
+  deadline. Only that shared interval is excluded; validation, filtering and
+  matching remain under one request-owned budget.
+- Script runs are classified in one pass, and ASCII mark folding bypasses
+  Unicode normalization, reducing cold English index construction without
+  changing token output.
+- Unicode join controls remain inside abjad and Brahmic words instead of
+  creating separate whole-word postings for the fragments on either side.
+- Isolated combining marks cannot create index terms or skew script reporting.
 - A query of nothing but combining marks is rejected rather than treated as an
   empty term.
 

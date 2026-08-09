@@ -156,6 +156,12 @@ class TestBrahmicScripts(TestMultilingualSearch):
         self.assertEqual(self._verse_numbers(self._search("می‌رود")), [21])
         self.assertEqual(self._verse_numbers(self._search("क्‍ष")), [22])
 
+        # The controls join each written word. Its fragments must not become
+        # independent whole-word postings merely because both sides analyse
+        # text using the same rules.
+        self.assertNotIn(21, self._verse_numbers(self._search("می")))
+        self.assertNotIn(22, self._verse_numbers(self._search("क्")))
+
 
 class TestMixedScripts(TestMultilingualSearch):
     def test_each_part_of_a_mixed_query_keeps_its_own_rules(self) -> None:
@@ -193,7 +199,7 @@ class TestResponseContract(TestMultilingualSearch):
     def test_engine_version_marks_the_matching_change(self) -> None:
         # Downstream result caches key on this, so it must move when matching
         # semantics change without a translation SHA changing.
-        self.assertEqual(self._search("神")["query"]["engine_version"], 3)
+        self.assertEqual(self._search("神")["query"]["engine_version"], 4)
 
     def test_the_response_reports_how_the_translation_was_read(self) -> None:
         self.assertEqual(

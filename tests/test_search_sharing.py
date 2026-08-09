@@ -2,13 +2,15 @@
 
 import tempfile
 import threading
-import time
 import unittest
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from unittest.mock import patch
 
-from getbible import GetBible, SearchBible
+from getbible import GetBible, SearchBible, SearchDeadlineExceeded
 from getbible.search import (
     CorpusRegistry,
+    SearchBudget,
     SearchEngine,
     SearchLimits,
     shared_registry,
@@ -17,6 +19,40 @@ from getbible.search.corpus import TranslationCorpus
 from getbible.translation_cache import TranslationSnapshot
 
 FIXTURE_REPOSITORY = Path(__file__).parent / "fixtures" / "multilingual_repository"
+
+
+class _FakeClock:
+    """Thread-safe monotonic clock advanced explicitly by each test phase."""
+
+    def __init__(self, value: float = 0.0) -> None:
+        self._lock = threading.Lock()
+        self._value = value
+
+    def __call__(self) -> float:
+        with self._lock:
+            return self._value
+
+    def advance(self, seconds: float) -> None:
+        with self._lock:
+            self._value += seconds
+
+
+class _ObservedLock:
+    """Lock that records when a second caller has to wait for its holder."""
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self.waiting = threading.Event()
+
+    def __enter__(self) -> "_ObservedLock":
+        if not self._lock.acquire(blocking=False):
+            self.waiting.set()
+            if not self._lock.acquire(timeout=2.0):
+                raise TimeoutError("Timed out waiting for the test index lock.")
+        return self
+
+    def __exit__(self, *exc_info: object) -> None:
+        self._lock.release()
 
 
 def _snapshot(sha: str = "sha-one") -> TranslationSnapshot:
@@ -142,23 +178,6 @@ class TestIndexConstruction(unittest.TestCase):
         self.assertEqual(builds, 1)
         self.assertEqual(len(indexes), 8)
 
-    def test_an_index_build_is_not_charged_to_the_request_deadline(self) -> None:
-        # deadline_seconds governs one request; index_build_seconds governs a
-        # build that every later request benefits from.
-        class SlowIndexCorpus(TranslationCorpus):
-            def index(self, *args, **kwargs):
-                time.sleep(0.02)
-                return super().index(*args, **kwargs)
-
-        limits = SearchLimits(deadline_seconds=0.01, index_build_seconds=60.0)
-        corpus = SlowIndexCorpus(_snapshot())
-        engine = SearchEngine(corpus, lambda name: 1 if name == "Book" else None, limits)
-
-        hits, total = engine.search("faith", SearchBible())
-
-        self.assertEqual(total, 39)
-        self.assertEqual(len(hits), 39)
-
     def test_a_built_index_is_published_before_the_lock_is_released(self) -> None:
         corpus = TranslationCorpus(_snapshot())
 
@@ -166,6 +185,167 @@ class TestIndexConstruction(unittest.TestCase):
 
         self.assertIs(corpus.index(), first)
         self.assertEqual(len(corpus.cache_info()["indexes"]), 1)
+
+
+class TestSearchDeadlineAccounting(unittest.TestCase):
+    def _engine(
+        self,
+        corpus: TranslationCorpus,
+        limits: SearchLimits,
+    ) -> SearchEngine:
+        return SearchEngine(
+            corpus,
+            lambda name: 1 if name == "Book" else None,
+            limits,
+        )
+
+    def test_cold_index_time_is_excluded_end_to_end(self) -> None:
+        from getbible.search import corpus as corpus_module
+
+        clock = _FakeClock()
+        limits = SearchLimits(deadline_seconds=5.0, index_build_seconds=60.0)
+        corpus = TranslationCorpus(_snapshot())
+        engine = self._engine(corpus, limits)
+        original = corpus_module.build_index
+        build_calls = 0
+
+        def delayed_build(*args: object, **kwargs: object) -> object:
+            nonlocal build_calls
+            build_calls += 1
+            clock.advance(10.0)
+            return original(*args, **kwargs)
+
+        with (
+            patch("getbible.search.limits.time.monotonic", clock),
+            patch.object(corpus_module, "build_index", delayed_build),
+        ):
+            hits, total = engine.search("faith", SearchBible())
+
+        self.assertEqual(build_calls, 1)
+        self.assertEqual(total, 39)
+        self.assertEqual(len(hits), 39)
+        self.assertEqual(engine.execution_info["elapsed_seconds"], 0.0)
+
+    def test_warm_index_does_not_reset_request_owned_work(self) -> None:
+        clock = _FakeClock()
+        limits = SearchLimits(deadline_seconds=5.0, index_build_seconds=60.0)
+        corpus = TranslationCorpus(_snapshot())
+        corpus.index(False, True, limits)
+        engine = self._engine(corpus, limits)
+        original_book_filter = engine._book_filter
+        original_resolve = engine._resolve
+
+        def delayed_book_filter(criteria: SearchBible) -> frozenset[int]:
+            clock.advance(3.0)
+            return original_book_filter(criteria)
+
+        def delayed_resolve(*args: object, **kwargs: object) -> object:
+            clock.advance(3.0)
+            return original_resolve(*args, **kwargs)
+
+        with (
+            patch("getbible.search.limits.time.monotonic", clock),
+            patch.object(engine, "_book_filter", side_effect=delayed_book_filter),
+            patch.object(engine, "_resolve", side_effect=delayed_resolve),
+            self.assertRaises(SearchDeadlineExceeded),
+        ):
+            engine.search("faith", SearchBible())
+
+    def test_concurrent_builder_and_waiter_keep_their_request_deadlines(
+        self,
+    ) -> None:
+        from getbible.search import corpus as corpus_module
+
+        clock = _FakeClock()
+        limits = SearchLimits(deadline_seconds=5.0, index_build_seconds=60.0)
+        corpus = TranslationCorpus(_snapshot())
+        index_lock = _ObservedLock()
+        corpus._index_locks[(False, True)] = index_lock
+        original = corpus_module.build_index
+        build_started = threading.Event()
+        release_build = threading.Event()
+        build_calls = 0
+        build_guard = threading.Lock()
+
+        def blocked_build(*args: object, **kwargs: object) -> object:
+            nonlocal build_calls
+            with build_guard:
+                build_calls += 1
+            build_started.set()
+            if not release_build.wait(timeout=2.0):
+                raise TimeoutError("Timed out waiting to release the test build.")
+            clock.advance(10.0)
+            return original(*args, **kwargs)
+
+        def search() -> tuple[int, int]:
+            hits, total = self._engine(corpus, limits).search(
+                "faith", SearchBible()
+            )
+            return len(hits), total
+
+        with (
+            patch("getbible.search.limits.time.monotonic", clock),
+            patch.object(corpus_module, "build_index", blocked_build),
+            ThreadPoolExecutor(max_workers=2) as executor,
+        ):
+            futures = [executor.submit(search) for _ in range(2)]
+            started = build_started.wait(timeout=2.0)
+            waiting = index_lock.waiting.wait(timeout=2.0) if started else False
+            release_build.set()
+            results = [future.result(timeout=2.0) for future in futures]
+
+        self.assertTrue(started)
+        self.assertTrue(waiting)
+        self.assertEqual(build_calls, 1)
+        self.assertEqual(results, [(39, 39), (39, 39)])
+        self.assertEqual(len(corpus.cache_info()["indexes"]), 1)
+
+    def test_index_build_limit_remains_independent(self) -> None:
+        from getbible.search import corpus as corpus_module
+
+        clock = _FakeClock()
+        limits = SearchLimits(deadline_seconds=5.0, index_build_seconds=1.0)
+        corpus = TranslationCorpus(_snapshot())
+        engine = self._engine(corpus, limits)
+
+        def overdue_build(
+            texts: object,
+            analyzer: object,
+            checkpoint: object,
+        ) -> object:
+            clock.advance(2.0)
+            checkpoint(0)
+            self.fail("The overdue index build should have been stopped.")
+
+        with (
+            patch("getbible.search.limits.time.monotonic", clock),
+            patch.object(corpus_module, "build_index", overdue_build),
+            self.assertRaisesRegex(TimeoutError, "Index construction exceeded"),
+        ):
+            engine.search("faith", SearchBible())
+
+        self.assertEqual(corpus.cache_info()["indexes"], [])
+
+    def test_extending_a_budget_preserves_own_work_and_telemetry(self) -> None:
+        clock = _FakeClock(100.0)
+        limits = SearchLimits(deadline_seconds=5.0)
+
+        with patch("getbible.search.limits.time.monotonic", clock):
+            budget = SearchBudget(limits)
+            clock.advance(2.5)
+            budget.extend(2.5)
+
+            self.assertEqual(budget.started_at, 102.5)
+            self.assertEqual(budget.deadline, 107.5)
+            self.assertEqual(budget.elapsed_seconds, 0.0)
+
+            budget.extend(0.0)
+            budget.extend(-1.0)
+            self.assertEqual(budget.started_at, 102.5)
+            self.assertEqual(budget.deadline, 107.5)
+
+            clock.advance(1.25)
+            self.assertEqual(budget.elapsed_seconds, 1.25)
 
 
 class TestSharedCorpusStillHonoursCriteria(unittest.TestCase):

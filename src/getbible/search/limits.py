@@ -111,6 +111,18 @@ class SearchBudget:
         """Add to the running total and fail once it passes the ceiling."""
         self.reserve(self.work_units + max(0, units))
 
+    def extend(self, seconds: float) -> None:
+        """Exclude shared work from this request's elapsed-time budget.
+
+        Index construction and lock waiting serve the translation rather than
+        one request. Shifting both timestamps preserves the original deadline
+        for request-owned work and keeps elapsed telemetry accurate.
+        """
+        if seconds > 0:
+            elapsed = float(seconds)
+            self.deadline += elapsed
+            self.started_at += elapsed
+
     def checkpoint(self, iteration: int = 0) -> None:
         if iteration % self.limits.deadline_check_interval == 0:
             self.check_deadline()

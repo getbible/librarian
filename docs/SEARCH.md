@@ -212,7 +212,7 @@ matches
   score, occurrences, terms
 ```
 
-`engine_version` is `3`. It moves whenever matching semantics change, so a
+`engine_version` is `4`. It moves whenever matching semantics change, so a
 downstream result cache can be invalidated without waiting for a translation SHA
 to change. **Key your response cache on it.**
 
@@ -264,7 +264,7 @@ in a mixed query.
 | Continuous scripts under default criteria | returned nothing | return the verses |
 | `diacritics` default | `sensitive` | `fold` |
 | Substring floor | all scripts | space-delimited scripts only |
-| `engine_version` | `2` | `3` |
+| `engine_version` | `2` | `4` |
 | Abjad with attached particle | missed | reachable by stem |
 
 Default searches return **more** than they did. If your application asserted a
@@ -277,7 +277,7 @@ is there to key that on.
   of `diacritics` (string).
 - `warm_translation()` takes `diacritics="fold"` by default and returns an
   `analysis` block.
-- `SEARCH_ENGINE_VERSION` is `3`.
+- `SEARCH_ENGINE_VERSION` is `4`.
 - `getbible.search` is a package. Every public name still imports from
   `getbible` and from `getbible.search`; the internal `_Matcher` class is gone.
 

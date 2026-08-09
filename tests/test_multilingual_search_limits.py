@@ -98,7 +98,7 @@ class TestMultilingualSearchLimits(unittest.TestCase):
         # 1.x asked applications to detect continuous scripts and switch to
         # substring. The engine derives that itself now, so the helper reports
         # that no caller-side change is required, for every script.
-        self.assertEqual(SEARCH_ENGINE_VERSION, 3)
+        self.assertEqual(SEARCH_ENGINE_VERSION, 4)
 
         for script, query in {
             "Han": "神",
