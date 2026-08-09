@@ -35,6 +35,40 @@ class TestLiveSearch(unittest.TestCase):
             all(match["book_nr"] >= 40 for match in response["matches"])
         )
 
+    def test_chinese_continuous_script_search(self):
+        response = self.bible.search("神爱世人", "cus")
+
+        self.assertGreater(response["query"]["total"], 0)
+        self.assertEqual(response["query"]["analysis"], {"script": "continuous"})
+        self.assertTrue(
+            any(
+                match["book_nr"] == 43
+                and match["chapter"] == 3
+                and match["verse"] == 16
+                for match in response["matches"]
+            )
+        )
+
+    def test_hebrew_abjad_search(self):
+        response = self.bible.search("בראשית", "aleppo")
+
+        self.assertGreater(response["query"]["total"], 0)
+        self.assertEqual(response["query"]["analysis"], {"script": "abjad"})
+        self.assertTrue(
+            any(
+                match["book_nr"] == 1
+                and match["chapter"] == 1
+                and match["verse"] == 1
+                for match in response["matches"]
+            )
+        )
+
+    def test_arabic_abjad_search(self):
+        response = self.bible.search("الرب", "arabicsv")
+
+        self.assertGreater(response["query"]["total"], 0)
+        self.assertEqual(response["query"]["analysis"], {"script": "abjad"})
+
 
 if __name__ == "__main__":
     unittest.main()
