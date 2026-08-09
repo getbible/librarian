@@ -203,6 +203,9 @@ class SearchEngine:
         query: str,
         criteria: SearchBible,
     ) -> tuple[list[SearchHit], int]:
+        # Validate the corpus-independent request before touching the index.
+        # The preliminary budget also rejects an impossible corpus scan before
+        # an expensive index build starts.
         budget = SearchBudget(self.limits)
         _, units, exclusions = validate_search_request(query, criteria, self.limits)
         book_filter = self._book_filter(criteria)
@@ -213,6 +216,11 @@ class SearchEngine:
         index = self.corpus.index(
             criteria.case_sensitive, criteria.fold_diacritics, self.limits
         )
+        # Index construction has its own bounded build window and produces a
+        # shared asset for later requests. Start the per-request execution
+        # deadline only after that one-time work has completed.
+        budget = SearchBudget(self.limits)
+        budget.reserve(len(self.corpus.records) + criteria.limit * 8)
         budget.reserve(self._estimate_work(index, units, exclusions, criteria))
 
         resolved = [self._resolve(index, unit, criteria, budget) for unit in units]
