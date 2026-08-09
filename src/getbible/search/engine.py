@@ -10,6 +10,7 @@ and costs what the result set costs rather than what the vocabulary costs.
 
 from __future__ import annotations
 
+import time
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 
@@ -210,9 +211,14 @@ class SearchEngine:
         # known without touching the index. Checking it first keeps a request
         # with an unusable budget from triggering an index build.
         budget.reserve(len(self.corpus.records) + criteria.limit * 8)
+        # Acquiring the index may build it, or wait on another thread building
+        # it. Either way the time belongs to the translation, not to this
+        # request, so it is returned to the budget before matching begins.
+        acquiring = time.monotonic()
         index = self.corpus.index(
             criteria.case_sensitive, criteria.fold_diacritics, self.limits
         )
+        budget.extend(time.monotonic() - acquiring)
         budget.reserve(self._estimate_work(index, units, exclusions, criteria))
 
         resolved = [self._resolve(index, unit, criteria, budget) for unit in units]

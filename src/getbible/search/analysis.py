@@ -110,20 +110,26 @@ _LETTER: Final = regex.compile(r"[\p{L}\p{N}]")
 # Each class is intersected with letters and numbers so script-specific
 # punctuation — the Hebrew sof pasuq, the Devanagari danda, the ideographic
 # full stop — bounds a run instead of being absorbed into the word.
-_RUN_PATTERNS: Final = (
-    (
-        ScriptFamily.CONTINUOUS,
-        regex.compile(rf"(?V1)[[{_CONTINUOUS_CLASS}]&&[\p{{L}}\p{{N}}\p{{M}}]]+"),
-    ),
-    (
-        ScriptFamily.ABJAD,
-        regex.compile(rf"(?V1)[[{_ABJAD_CLASS}]&&[\p{{L}}\p{{N}}\p{{M}}]‌‍]+"),
-    ),
-    (
-        ScriptFamily.BRAHMIC,
-        regex.compile(rf"(?V1)[[{_BRAHMIC_CLASS}]&&[\p{{L}}\p{{N}}\p{{M}}]‌‍]+"),
-    ),
+#
+# One alternation finds every run in a single pass. Classifying character by
+# character cost a handful of regex calls per character, which on a whole
+# translation was seconds of index construction. The specific families come
+# first because Han and Hebrew letters are also ``\p{L}`` and would otherwise
+# be taken by the alphabetic branch.
+_RUN_SCANNER: Final = regex.compile(
+    rf"(?V1)"
+    rf"(?P<continuous>[[{_CONTINUOUS_CLASS}]&&[\p{{L}}\p{{N}}\p{{M}}]]+)"
+    rf"|(?P<abjad>[[{_ABJAD_CLASS}]&&[\p{{L}}\p{{N}}\p{{M}}]‌‍]+)"
+    rf"|(?P<brahmic>[[{_BRAHMIC_CLASS}]&&[\p{{L}}\p{{N}}\p{{M}}]‌‍]+)"
+    rf"|(?P<alphabetic>[{_WORD_START}][{_WORD_BODY}]*"
+    rf"(?:['’][{_WORD_START}][{_WORD_BODY}]*)*)"
 )
+_RUN_FAMILIES: Final = {
+    "continuous": ScriptFamily.CONTINUOUS,
+    "abjad": ScriptFamily.ABJAD,
+    "brahmic": ScriptFamily.BRAHMIC,
+    "alphabetic": ScriptFamily.ALPHABETIC,
+}
 
 # Precomposed letters that Unicode decomposition cannot reach. NFD turns "é"
 # into "e" plus a combining mark, but "đ" and "ø" are atomic code points, so a
@@ -184,6 +190,10 @@ def fold_marks(text: str) -> str:
     vowel pointing. Never applied to Brahmic or continuous text, where marks
     carry vowels that change the word.
     """
+    if text.isascii():
+        # ASCII carries no combining mark and no precomposed letter in the fold
+        # table, so an English corpus skips three Unicode passes per word.
+        return text
     decomposed = unicodedata.normalize("NFD", text.translate(_PRECOMPOSED_FOLD))
     stripped = "".join(
         character
@@ -217,44 +227,10 @@ def classify_text(text: str) -> ScriptFamily:
     return max(counts, key=lambda family: counts[family])
 
 
-def _family_of(character: str) -> ScriptFamily:
-    if _CONTINUOUS_CHAR.match(character):
-        return ScriptFamily.CONTINUOUS
-    if _ABJAD_CHAR.match(character):
-        return ScriptFamily.ABJAD
-    if _BRAHMIC_CHAR.match(character):
-        return ScriptFamily.BRAHMIC
-    return ScriptFamily.ALPHABETIC
-
-
 def _classify_runs(text: str) -> Iterator[tuple[ScriptFamily, str]]:
     """Split text into maximal single-family runs, skipping separators."""
-    position = 0
-    length = len(text)
-    while position < length:
-        character = text[position]
-        if not _LETTER.match(character) and not unicodedata.combining(character):
-            position += 1
-            continue
-        family = _family_of(character)
-        pattern = next(
-            (candidate for group, candidate in _RUN_PATTERNS if group is family),
-            None,
-        )
-        if pattern is None:
-            match = _WORD.match(text, position)
-            if match is None:
-                position += 1
-                continue
-            yield ScriptFamily.ALPHABETIC, match.group()
-            position = match.end()
-            continue
-        match = pattern.match(text, position)
-        if match is None:
-            position += 1
-            continue
-        yield family, match.group()
-        position = match.end()
+    for match in _RUN_SCANNER.finditer(text):
+        yield _RUN_FAMILIES[match.lastgroup], match.group()
 
 
 class Analyzer:

@@ -111,6 +111,18 @@ class SearchBudget:
         """Add to the running total and fail once it passes the ceiling."""
         self.reserve(self.work_units + max(0, units))
 
+    def extend(self, seconds: float) -> None:
+        """Give back time spent on work that was not this request's own.
+
+        Building a shared index serves every later request. Whichever request
+        happens to trigger it must not lose its own deadline to it, or the
+        first caller after a restart fails while every caller behind them
+        succeeds — which is how a cold service looked broken.
+        """
+        if seconds > 0:
+            self.deadline += float(seconds)
+            self.started_at += float(seconds)
+
     def checkpoint(self, iteration: int = 0) -> None:
         if iteration % self.limits.deadline_check_interval == 0:
             self.check_deadline()

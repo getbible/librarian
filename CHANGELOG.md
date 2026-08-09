@@ -58,9 +58,15 @@ query string; it no longer decides how a writing system should be read.
   character, so `all` matched inside `shall`.
 - Work is estimated from postings lengths. The previous estimator walked the
   whole vocabulary once per term and cost more than the search it guarded.
-- An index build no longer runs against the requesting call's deadline. A build
-  that timed out cached nothing, so the next request repeated it and failed the
-  same way.
+- An index build no longer runs against the requesting call's deadline, in
+  either direction. The build is bounded by `index_build_seconds` so it is
+  never abandoned part way, and the time it takes is returned to the
+  requesting call's budget so the caller that happens to trigger it does not
+  fail while every caller behind it succeeds. Waiting on another thread's
+  build is credited the same way.
+- Analysis classifies runs in one pass instead of examining each character,
+  roughly halving index construction, and ASCII text skips mark folding
+  entirely.
 - A query of nothing but combining marks is rejected rather than treated as an
   empty term.
 

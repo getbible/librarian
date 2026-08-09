@@ -2,12 +2,15 @@
 
 import tempfile
 import threading
+import time
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
-from getbible import GetBible, SearchBible
-from getbible.search import CorpusRegistry, shared_registry
+from getbible import GetBible, SearchBible, SearchDeadlineExceeded
+from getbible.search import CorpusRegistry, SearchBudget, SearchLimits, shared_registry
 from getbible.search.corpus import TranslationCorpus
+from getbible.search.engine import SearchEngine
 from getbible.translation_cache import TranslationSnapshot
 
 FIXTURE_REPOSITORY = Path(__file__).parent / "fixtures" / "multilingual_repository"
@@ -174,6 +177,76 @@ class TestSharedCorpusStillHonoursCriteria(unittest.TestCase):
         corpus = self.bible._search_corpus("multi")
 
         self.assertEqual(len(corpus.cache_info()["indexes"]), 3)
+
+
+class TestBuildTimeIsNotChargedToTheRequest(unittest.TestCase):
+    """A cold request must not die paying for work that serves everyone.
+
+    This reproduces the live-integration failure offline and deterministically.
+    The first search against a full translation builds its index; if that time
+    is charged to the requesting call's deadline, the first caller after a
+    restart fails while every caller behind them succeeds.
+    """
+
+    def _engine(self, limits: SearchLimits) -> SearchEngine:
+        from getbible.search.engine import SearchEngine
+
+        return SearchEngine(TranslationCorpus(_snapshot()), lambda name: None, limits)
+
+    def test_a_slow_index_build_does_not_consume_the_request_deadline(self) -> None:
+        from getbible.search import corpus as corpus_module
+
+        limits = SearchLimits(deadline_seconds=0.4, index_build_seconds=30.0)
+        engine = self._engine(limits)
+        original = corpus_module.build_index
+
+        def slow_build(*args: object, **kwargs: object) -> object:
+            time.sleep(0.9)  # more than twice the request deadline
+            return original(*args, **kwargs)
+
+        with patch.object(corpus_module, "build_index", slow_build):
+            hits, total = engine.search("faith", SearchBible())
+
+        self.assertGreater(total, 0)
+        self.assertTrue(hits)
+
+    def test_the_deadline_still_fires_for_the_request_s_own_work(self) -> None:
+        # Returning build time must not amount to switching the deadline off.
+        budget = SearchBudget(SearchLimits(deadline_seconds=0.05))
+        time.sleep(0.1)
+
+        with self.assertRaises(SearchDeadlineExceeded):
+            budget.check_deadline()
+
+    def test_extend_returns_exactly_the_time_it_is_given(self) -> None:
+        budget = SearchBudget(SearchLimits(deadline_seconds=1.0))
+        before = budget.deadline
+
+        budget.extend(2.5)
+        budget.extend(-1.0)  # never shortens
+
+        self.assertAlmostEqual(budget.deadline - before, 2.5, places=3)
+
+    def test_a_second_request_is_not_credited_for_a_build_it_did_not_do(
+        self,
+    ) -> None:
+        from getbible.search import corpus as corpus_module
+
+        limits = SearchLimits(deadline_seconds=0.4, index_build_seconds=30.0)
+        engine = self._engine(limits)
+        original = corpus_module.build_index
+        calls: list[int] = []
+
+        def counted_build(*args: object, **kwargs: object) -> object:
+            calls.append(1)
+            time.sleep(0.9)
+            return original(*args, **kwargs)
+
+        with patch.object(corpus_module, "build_index", counted_build):
+            engine.search("faith", SearchBible())
+            engine.search("hope", SearchBible())
+
+        self.assertEqual(len(calls), 1)
 
 
 if __name__ == "__main__":
