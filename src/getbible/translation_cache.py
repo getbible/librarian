@@ -79,6 +79,7 @@ class TranslationCache:
         "direction",
         "encoding",
     )
+    OPTIONAL_BOOK_INDEX_METADATA = frozenset({"language", "encoding"})
 
     def __init__(
         self,
@@ -623,7 +624,11 @@ class TranslationCache:
         metadata: list[tuple[str, str]] = []
         for field in cls.BOOK_INDEX_METADATA:
             value = source.get(field)
-            if not isinstance(value, str) or not value or len(value) > cls.MAX_NAME_LENGTH:
+            if (
+                not isinstance(value, str)
+                or len(value) > cls.MAX_NAME_LENGTH
+                or (not value and field not in cls.OPTIONAL_BOOK_INDEX_METADATA)
+            ):
                 raise CacheIntegrityError(
                     f"Books index contains an invalid {field!r} field."
                 )
