@@ -473,24 +473,26 @@ def _within_proximity(
     ordinal: int,
     allowed: int,
 ) -> bool:
-    """Return whether every unit fits inside one window in this verse."""
-    groups = [found.get(ordinal) or [] for found in resolved]
+    """Return whether every unit fits inside one window in this verse.
+
+    This is the smallest range covering one element from each of several sorted
+    lists. Advancing the list that currently holds the minimum is what makes it
+    exact: picking each unit's position nearest to some anchor is a greedy
+    choice that can step over the window that would have qualified.
+    """
+    groups = [sorted(found.get(ordinal) or []) for found in resolved]
     if any(not group for group in groups):
         return False
     span = sum(unit.span for unit in units)
-    for start in groups[0]:
-        lower = upper = start
-        chosen = True
-        for group in groups[1:]:
-            nearest = min(group, key=lambda value: abs(value - start))
-            lower = min(lower, nearest)
-            upper = max(upper, nearest)
-            if upper - lower + 1 - span > allowed:
-                chosen = False
-                break
-        if chosen:
+    cursors = [0] * len(groups)
+    while True:
+        current = [group[cursors[index]] for index, group in enumerate(groups)]
+        if max(current) - min(current) + 1 - span <= allowed:
             return True
-    return False
+        smallest = min(range(len(current)), key=lambda index: current[index])
+        cursors[smallest] += 1
+        if cursors[smallest] >= len(groups[smallest]):
+            return False
 
 
 def merged_terms(units: Iterable[QueryUnit]) -> tuple[str, ...]:

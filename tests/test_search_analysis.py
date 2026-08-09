@@ -235,3 +235,41 @@ class TestPositionalIndex(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestProximityWindows(unittest.TestCase):
+    """Proximity must find a qualifying window whenever one exists."""
+
+    def setUp(self) -> None:
+        from getbible.search.engine import QueryUnit, _within_proximity
+        from getbible.search.analysis import ScriptFamily as SF
+
+        self.check = _within_proximity
+        self.unit = lambda offset: QueryUnit("x", (), SF.ALPHABETIC, offset, 1)
+
+    def _units(self, count: int) -> list:
+        return [self.unit(index) for index in range(count)]
+
+    def test_a_distant_first_occurrence_does_not_hide_a_close_pair(self) -> None:
+        # Anchoring on the first occurrence of the first unit and taking each
+        # other unit's nearest position misses the window at 40/41.
+        resolved = [{0: [0, 40]}, {0: [41]}]
+
+        self.assertTrue(self.check(resolved, self._units(2), 0, 0))
+
+    def test_three_units_find_their_tightest_window(self) -> None:
+        resolved = [{0: [1, 30]}, {0: [15, 31]}, {0: [16, 32]}]
+
+        self.assertTrue(self.check(resolved, self._units(3), 0, 0))
+        self.assertFalse(self.check(resolved, self._units(3), 0, -1))
+
+    def test_a_unit_absent_from_the_verse_fails(self) -> None:
+        resolved = [{0: [1]}, {}]
+
+        self.assertFalse(self.check(resolved, self._units(2), 0, 100))
+
+    def test_intervening_units_are_counted(self) -> None:
+        resolved = [{0: [0]}, {0: [3]}]
+
+        self.assertFalse(self.check(resolved, self._units(2), 0, 1))
+        self.assertTrue(self.check(resolved, self._units(2), 0, 2))

@@ -25,7 +25,51 @@ def parse_arguments() -> argparse.Namespace:
         "--match", choices=("whole_word", "substring"), default="whole_word"
     )
     parser.add_argument("--limit", type=int, default=20)
+    parser.add_argument(
+        "--sweep",
+        action="store_true",
+        help=(
+            "Benchmark one query per writing-system family instead of a single "
+            "query. A regression in any family shows up as a latency gap "
+            "between families rather than as an outright failure."
+        ),
+    )
     return parser.parse_args()
+
+
+#: One representative translation and query per family. A search costs what its
+#: result set costs, so these are chosen to return comparable numbers of verses;
+#: a family that drifts far from the others points at an analysis regression.
+SWEEP = (
+    ("alphabetic", "kjv", "faith"),
+    ("alphabetic", "moderngreek", "\u03b1\u03b3\u03b1\u03c0\u03b7"),
+    ("continuous", "cus", "\u795e"),
+    ("continuous", "japkougo", "\u30a4\u30a8\u30b9"),
+    ("continuous", "korean", "\uc0ac\ub791"),
+    ("continuous", "thai", "\u0e1e\u0e23\u0e30\u0e40\u0e08\u0e49\u0e32"),
+    ("abjad", "modernhebrew", "\u05d0\u05dc\u05d4\u05d9\u05dd"),
+    ("abjad", "arabicsv", "\u0627\u0644\u0644\u0647"),
+)
+
+
+def sweep(arguments: argparse.Namespace) -> list[dict[str, Any]]:
+    """Benchmark every writing-system family through the public API."""
+    measured: list[dict[str, Any]] = []
+    for family, translation, query in SWEEP:
+        scoped = argparse.Namespace(**vars(arguments))
+        scoped.translation = translation
+        scoped.query = query
+        scoped.sweep = False
+        try:
+            result = benchmark(scoped)
+        except Exception as error:  # a missing translation must not stop the sweep
+            measured.append(
+                {"family": family, "translation": translation, "error": str(error)}
+            )
+            continue
+        result["family"] = family
+        measured.append(result)
+    return measured
 
 
 def benchmark(arguments: argparse.Namespace) -> dict[str, Any]:
@@ -82,6 +126,9 @@ def benchmark(arguments: argparse.Namespace) -> dict[str, Any]:
 
 def main() -> int:
     arguments = parse_arguments()
+    if arguments.sweep:
+        print(json.dumps(sweep(arguments), indent=2, sort_keys=True))
+        return 0
     print(json.dumps(benchmark(arguments), indent=2, sort_keys=True))
     return 0
 
