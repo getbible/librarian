@@ -70,7 +70,7 @@ query string; it no longer decides how a writing system should be read.
   deleted from callers. It remains exported so existing imports keep working.
 - `allows_short_substring()` reports whether the substring floor is waived.
 
-## [1.2.1] - Unreleased
+## [1.2.1] - 2026-07-29
 
 ### Added
 
