@@ -2,11 +2,17 @@
 
 import tempfile
 import threading
+import time
 import unittest
 from pathlib import Path
 
 from getbible import GetBible, SearchBible
-from getbible.search import CorpusRegistry, shared_registry
+from getbible.search import (
+    CorpusRegistry,
+    SearchEngine,
+    SearchLimits,
+    shared_registry,
+)
 from getbible.search.corpus import TranslationCorpus
 from getbible.translation_cache import TranslationSnapshot
 
@@ -139,14 +145,19 @@ class TestIndexConstruction(unittest.TestCase):
     def test_an_index_build_is_not_charged_to_the_request_deadline(self) -> None:
         # deadline_seconds governs one request; index_build_seconds governs a
         # build that every later request benefits from.
-        from getbible.search import SearchLimits
+        class SlowIndexCorpus(TranslationCorpus):
+            def index(self, *args, **kwargs):
+                time.sleep(0.02)
+                return super().index(*args, **kwargs)
 
-        limits = SearchLimits(deadline_seconds=0.001, index_build_seconds=60.0)
-        corpus = TranslationCorpus(_snapshot())
+        limits = SearchLimits(deadline_seconds=0.01, index_build_seconds=60.0)
+        corpus = SlowIndexCorpus(_snapshot())
+        engine = SearchEngine(corpus, lambda name: 1 if name == "Book" else None, limits)
 
-        index = corpus.index(False, True, limits)
+        hits, total = engine.search("faith", SearchBible())
 
-        self.assertGreater(len(index.postings), 0)
+        self.assertEqual(total, 39)
+        self.assertEqual(len(hits), 39)
 
     def test_a_built_index_is_published_before_the_lock_is_released(self) -> None:
         corpus = TranslationCorpus(_snapshot())
