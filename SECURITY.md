@@ -13,7 +13,7 @@ Do not open a public issue containing exploit details, credentials, private data
 - expected and observed behavior;
 - impact and any known mitigations.
 
-Never include a Telegram token or other production secret. Rotate a secret immediately if it may have been exposed.
+Never include a production secret. Rotate a secret immediately if it may have been exposed.
 
 ## Security invariants
 

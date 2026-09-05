@@ -1,12 +1,14 @@
-# Multi-worker API operations
+# Multi-process operations
 
-Librarian is designed to be held as a long-lived application dependency in
-each API worker. Deploy the reference Query and full-text Search APIs as
-independent services so search CPU and memory cannot consume Query capacity.
+Librarian is designed to be held as a long-lived dependency in each process
+of an application. Retrieval and search are independent capabilities; an
+application that serves both under load often runs them in separate processes
+so search CPU and memory cannot starve retrieval, and the library supports
+either arrangement.
 
 ## Client lifetime
 
-Create one client during application initialization or once per worker. Do not construct a new client for every HTTP request.
+Create one client during application initialization or once per worker. Do not construct a new client for every call.
 
 ```python
 from getbible import GetBible, SearchLimits
@@ -27,10 +29,8 @@ def execute_search_query(query: str, translation: str, criteria: dict) -> dict:
     return bible.search(query, translation, criteria)
 ```
 
-The example functions are framework-neutral and can be called by Flask, Django,
-FastAPI, or another WSGI/ASGI endpoint. They illustrate Librarian calls only;
-the official deployment places them in separate processes and writable cache
-directories.
+The example functions are framework-neutral. They illustrate Librarian calls
+only; what surrounds them belongs to the application.
 
 ## Worker processes
 
@@ -118,44 +118,39 @@ Every growing process-local cache is bounded by default:
 | Full search corpora and indexes | `search_corpus_limit` | 4 |
 | Validated translation snapshots | `translation_cache_limit` | 4 |
 
-These limits apply to each worker process, not to the whole deployment. Size
-worker memory for the largest translations and index variants actually served.
+These limits apply to each process, not to the whole application. Size
+process memory for the largest translations and index variants actually used.
 Use `0` to disable retention or `None` for an unbounded cache. Avoid `None` for
-full translations and corpora in a public multi-translation service.
+full translations and corpora when many translations are in play.
 
-For a Query-only process, set `search_corpus_limit=0` and
-`translation_cache_limit=0`. For a Search-only process, set
+For a retrieval-only process, set `search_corpus_limit=0` and
+`translation_cache_limit=0`. For a search-only process, set
 `reference_cache_limit=0` and `chapter_cache_limit=0`, then choose small corpus
-and translation limits based on measured worker RSS. Both services can read the
-same local API mirror but should never share a writable cache directory.
+and translation limits based on measured RSS. Processes can read the same
+repository but should never share a writable cache directory.
 
 ## Pagination limits
 
-The library restricts a page to 1,000 matches. The API layer may impose a smaller public maximum. Exact totals are reported independently of the returned page.
+The library restricts a page to 1,000 matches. An application may impose a smaller maximum. Exact totals are reported independently of the returned page.
 
-## Search tiers and outer deadlines
+## Deadlines
 
-Parse `SearchBible` before entering a rate-limiter reservation. Its
-`expensive` property is deliberately corpus-independent:
+`SearchBible.expensive` is deliberately corpus-independent, so an application
+can classify a search before it runs:
 
 ```python
 criteria = SearchBible.from_value(filters)
-tier = "strict" if criteria.expensive else "normal"
-with limiter.reserve(identity, tier=tier):
-    response = bible.search(query, translation, criteria)
+if criteria.expensive:
+    ...  # budget it however the application sees fit
+response = bible.search(query, translation, criteria)
 ```
 
-Use independent counters for the two tiers. A production starting point is 60
-normal searches per minute with a burst of 10, and 12 strict searches per
-minute with a burst of 3, per authenticated identity and per source IP. Tune
-from measured capacity; never combine the strict and normal burst pools.
-
-The default cooperative Librarian deadline is 5 seconds. The application
-server should use a 7-second request deadline and the reverse proxy a 10-second
-upstream deadline, leaving time to translate a typed failure into a clean HTTP
-response. Repository connect/read timeouts govern source refresh separately.
-Do not rely on a proxy timeout to stop Python work: it disconnects the caller
-but does not itself cancel matching.
+The default cooperative Librarian deadline is 5 seconds. An application that
+wraps a call in a timeout of its own should set that timeout above the
+Librarian deadline, leaving time to translate a typed failure into whatever it
+reports to its callers. Repository connect/read timeouts govern source refresh
+separately. A timeout imposed from outside the process does not stop Python
+work: it abandons the caller but does not itself cancel matching.
 
 ## Timeouts and retries
 
@@ -168,40 +163,17 @@ Defaults:
 
 Override these through `GetBible()` when the hosting environment requires different limits.
 
-## systemd cgroup limits
-
-Maintained baseline drop-ins are provided for independent Query and Search
-units:
-
-```bash
-sudo install -D -m 0644 \
-  deploy/systemd/getbible-query.service.d/limits.conf \
-  /etc/systemd/system/getbible-query.service.d/limits.conf
-sudo install -D -m 0644 \
-  deploy/systemd/getbible-search.service.d/limits.conf \
-  /etc/systemd/system/getbible-search.service.d/limits.conf
-sudo systemctl daemon-reload
-sudo systemctl restart getbible-query.service getbible-search.service
-sudo systemctl show getbible-query.service getbible-search.service \
-  -p MemoryHigh -p MemoryMax -p MemorySwapMax -p CPUQuotaPerSecUSec -p TasksMax
-```
-
-The Query baseline is 512 MiB/200% CPU/64 tasks. Search is isolated at 3
-GiB/400% CPU/128 tasks. Both disable swap for the unit and stop on an OOM event.
-Treat these as tested starting limits: lower corpus counts before raising
-`MemoryMax`, and validate the chosen values under a full-translation load test.
-
 ## Monitoring
 
-The API layer should record:
+An application should record:
 
-- request duration by reference and search endpoint;
+- call duration for retrieval and for search;
 - translation, criteria mode, and page size;
 - cache `stale` state;
 - repository and checksum failures;
-- worker memory after each newly loaded translation/index mode;
+- process memory after each newly loaded translation/index mode;
 - search totals and response sizes;
-- rate limiting and rejected criteria.
+- rejected criteria.
 
 `cache_info()` provides JSON-safe sizes, limits, hit/miss/eviction counters,
 loaded translation SHA values, stale flags, and currently built index variants.
@@ -213,18 +185,17 @@ metrics.gauge("librarian.search_corpora", state["search_corpora"]["size"])
 metrics.counter("librarian.search_evictions", state["search_corpora"]["evictions"])
 ```
 
-Read these counters periodically or at worker shutdown. Do not call
-`cache_info()` on every public request solely for logging.
+Read these counters periodically or at shutdown. Do not call `cache_info()`
+on every call solely for logging.
 
 ## Shutdown
 
-Call `bible.close()` from the worker/application shutdown hook after request
+Call `bible.close()` from the application's shutdown hook after calling
 threads have stopped. It closes every HTTP session created by that process.
 Short-lived scripts can use `GetBible` as a context manager.
 
-Do not log complete private caller context. In particular, keep raw search text
-out of application and reverse-proxy logs by default; record request IDs,
-lengths, counts, status, and timing instead.
+`cache_info()` never contains verse text or search terms, so it can be logged
+freely; what an application logs about its own callers is its own decision.
 
 ## Benchmarking
 

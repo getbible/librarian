@@ -37,7 +37,7 @@ bible = GetBible(
 )
 ```
 
-The parser has an independent hard ceiling of 200 verses per reference and validates the range size before constructing it. A service may configure stricter values. Public chat and HTTP layers should normally do so.
+The parser has an independent hard ceiling of 200 verses per reference and validates the range size before constructing it. An application may configure stricter values.
 
 Search work is estimated deterministically from the corpus index, requested
 criteria, filter breadth, sorting mode, and response page before matching is
@@ -65,7 +65,7 @@ budgets. These checks run before repository access and prevent oversized
 criteria from consuming normalization work or being echoed into a response.
 `SearchBible.expensive` classifies substring, phrase, any-word, proximity,
 relevance, exclusion, deep-offset, and large-page criteria before execution so
-the HTTP layer can apply its strict rate tier. Diacritic folding is no longer
+an application can budget expensive searches before running them. Diacritic folding is no longer
 listed: it is the default and happens once during index construction, so it
 costs nothing per request.
 
@@ -101,6 +101,11 @@ Both local and HTTP resources are byte-bounded. Remote responses are streamed in
 
 Use HTTPS for remote production repositories. Plain HTTP remains supported for loopback tests and explicitly controlled private deployments for backward compatibility.
 
-## Application-layer requirements
+## What the library does not do
 
-The library limits protect every caller, but public applications must additionally provide identity-aware rate limiting, bounded concurrency, an outer operation deadline shorter than the proxy timeout, safe output encoding, generic error messages, and deployment resource limits. See [Multi-worker API operations](OPERATIONS.md) for the normal/strict tiers and maintained systemd drop-ins.
+The library limits bound every call it makes. Anything around the call is the
+application's own: how many calls run at once, how long the whole operation
+may take, how results are encoded for its callers, and what its callers are
+told when a call fails. See [Multi-process operations](OPERATIONS.md) for the
+client lifetime and memory guidance that applies whenever several processes
+share the library.

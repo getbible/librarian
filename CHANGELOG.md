@@ -28,6 +28,10 @@ query string; it no longer decides how a writing system should be read.
 - `cache_info()["indexes"]` reports `fold_diacritics` instead of `diacritics`.
 - `warm_translation()` defaults to `diacritics="fold"` and returns an `analysis`
   block.
+- A local repository (a directory `repo_path`) is read in place: the full
+  translation is validated and held in memory without a duplicate copy under
+  the cache directory. Remote repositories keep the on-disk copy that backs
+  last-known-good fallback.
 
 ### Added
 

@@ -59,6 +59,9 @@ class TranslationCache:
     """Coordinate in-memory and cross-process on-disk translation caching."""
 
     VALIDATION_VERSION = 2
+    #: Metadata payload marker for local repositories: the validated bytes are
+    #: read from the source file itself instead of a content-addressed copy.
+    SOURCE_PAYLOAD = "source"
     MAX_BOOKS = 256
     MAX_CHAPTERS_PER_BOOK = 500
     MAX_VERSES_PER_CHAPTER = 500
@@ -264,7 +267,7 @@ class TranslationCache:
             self._write_metadata(
                 paths["metadata"],
                 snapshot,
-                payload=f"{disk.sha}.json",
+                payload=self.SOURCE_PAYLOAD if not self.repository.is_url else f"{disk.sha}.json",
                 books_sha=books_sha,
             )
             return snapshot
@@ -280,13 +283,18 @@ class TranslationCache:
 
         data = self._decode_translation(raw, abbreviation, books_index)
         snapshot = TranslationSnapshot(data, actual_sha, now)
-        paths["objects"].mkdir(parents=True, exist_ok=True)
-        payload = paths["objects"] / f"{actual_sha}.json"
-        self._write_content_addressed(payload, raw, actual_sha)
+        if self.repository.is_url:
+            paths["objects"].mkdir(parents=True, exist_ok=True)
+            payload = paths["objects"] / f"{actual_sha}.json"
+            self._write_content_addressed(payload, raw, actual_sha)
+            payload_name = payload.name
+        else:
+            # The source already lives on this disk; keep only the metadata.
+            payload_name = self.SOURCE_PAYLOAD
         self._write_metadata(
             paths["metadata"],
             snapshot,
-            payload=payload.name,
+            payload=payload_name,
             books_sha=books_sha,
         )
         return snapshot
@@ -309,7 +317,7 @@ class TranslationCache:
             or not self._valid_sha(books_sha)
             or not math.isfinite(checked_at)
             or checked_at < 0
-            or payload != f"{expected_sha}.json"
+            or payload not in self._allowed_payloads(expected_sha)
             or not isinstance(source_generation, int)
             or isinstance(source_generation, bool)
             or source_generation < 0
@@ -323,6 +331,17 @@ class TranslationCache:
             source_generation,
         )
 
+    def _allowed_payloads(self, expected_sha: str) -> frozenset[str]:
+        """Payload names a metadata file may carry for this repository.
+
+        Remote repositories keep a content-addressed copy; a local directory is
+        read in place and records the ``source`` marker instead.
+        """
+        allowed = {f"{expected_sha}.json"}
+        if not self.repository.is_url:
+            allowed.add(self.SOURCE_PAYLOAD)
+        return frozenset(allowed)
+
     def _read_disk(
         self,
         paths: dict[str, Path],
@@ -332,6 +351,7 @@ class TranslationCache:
         if metadata is None:
             return None
         expected_sha = metadata.sha
+        abbreviation = paths["metadata"].name.removesuffix(".metadata.json")
         with self._guard:
             source_generation = self._source_generation
         checked_at = (
@@ -339,18 +359,28 @@ class TranslationCache:
             if metadata.source_generation == source_generation
             else 0.0
         )
-        payload = paths["objects"] / metadata.payload
-        try:
-            raw = payload.read_bytes()
-        except OSError:
-            return None
+        from_source = metadata.payload == self.SOURCE_PAYLOAD
+        if from_source:
+            try:
+                raw = self.repository.fetch_bytes(f"{abbreviation}.json")
+            except RepositoryError:
+                return None
+        else:
+            payload = paths["objects"] / metadata.payload
+            try:
+                raw = payload.read_bytes()
+            except OSError:
+                return None
 
         actual_sha = hashlib.sha1(raw, usedforsecurity=False).hexdigest()
         if actual_sha != expected_sha:
+            if from_source:
+                # The local file changed underneath the recorded state; the
+                # caller falls through to a fresh validated read.
+                return None
             LOGGER.warning("Ignoring a corrupt Librarian translation cache entry.")
             return None
         try:
-            abbreviation = paths["metadata"].name.removesuffix(".metadata.json")
             data = self._decode_translation(raw, abbreviation)
         except (CacheIntegrityError, RepositoryResponseError):
             LOGGER.warning("Ignoring an invalid Librarian translation cache entry.")

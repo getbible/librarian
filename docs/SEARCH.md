@@ -118,8 +118,7 @@ response = bible.search(
 `books` intersects with `scope`: `scope="new_testament"` with `books=("John",)`
 searches only John.
 
-Criteria may also be a JSON-decoded dictionary, which is what the HTTP service
-passes:
+Criteria may also be a JSON-decoded dictionary:
 
 ```python
 bible.search("faith hope", "kjv", {"words": "phrase", "limit": 50})
@@ -217,7 +216,7 @@ downstream result cache can be invalidated without waiting for a translation SHA
 to change. **Key your response cache on it.**
 
 `SearchBible.expensive` is available before a translation is loaded and is the
-right signal for a strict rate tier. Diacritic folding is no longer part of it:
+right signal for budgeting expensive searches. Diacritic folding is no longer part of it:
 folding happens once during index construction and costs nothing per request.
 
 ## Performance and sharing

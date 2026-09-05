@@ -4,9 +4,8 @@ This file applies to the entire repository.
 
 ## Project purpose
 
-GetBible Librarian is the Python retrieval and search library used by the
-independent GetBible Query and Search services and by standalone Python
-applications. It must remain safe under threaded and multi-process API loads
+GetBible Librarian is the Python retrieval and search library used by
+getBible applications and by standalone Python programs. It must remain safe under threaded and multi-process API loads
 while preserving its published JSON contracts.
 
 The primary project home remains <https://git.vdm.dev/getBible/librarian>. GitHub at <https://github.com/getbible/librarian> hosts the deployment workflow, CI, releases, and PyPI publication path. Preserve both locations in project metadata and documentation.
@@ -28,9 +27,13 @@ The primary project home remains <https://git.vdm.dev/getBible/librarian>. GitHu
 - `search()["results"]` must retain the same chapter and verse object structure as `select()`.
 - Additive metadata is allowed. Removing or renaming existing scripture fields requires an explicit compatibility decision and migration documentation.
 - Translation abbreviations are lowercase API identifiers and must be validated with a full match.
-- The canonical Query route is `GET query.getbible.net/v2/{translation}/{reference}` and calls `select()` only.
-- The canonical Search route is `GET search.getbible.net/v2/{translation}?q=...` and calls `search()` only.
-- Do not reintroduce search under Query, reference lookup under Search, the combined `/v2/search/{translation}` route, or POST-based public APIs.
+
+## Documentation scope
+
+Document the library: how to call it, what it returns, how it caches, how it
+is built and released. Do not document or prescribe how an application or
+service built on it should be deployed, routed, rate limited, or operated;
+that is outside the library's scope.
 
 ## Architecture rules
 
@@ -42,12 +45,11 @@ The primary project home remains <https://git.vdm.dev/getBible/librarian>. GitHu
 - Keep loaded translation corpora immutable. Build alternative analysed search indexes lazily.
 - Corpora are shared process-wide through the registry keyed by repository, translation, and source SHA. Do not reintroduce per-instance corpus ownership.
 - Index construction is bounded by `index_build_seconds`, never by a request deadline. A build that is abandoned must not leave the next request repeating it.
-- Preserve bounded process-local caches and reference-counted keyed locks; public API workloads must not grow memory solely because new keys or translations are requested.
+- Preserve bounded process-local caches and reference-counted keyed locks; a workload must not grow memory solely because new keys or translations are requested.
 - Preserve `warm_translation()`, JSON-safe `cache_info()`, and orderly `close()` behavior when changing repository or cache internals.
 - When a validated source SHA is unchanged, retain the existing corpus and built indexes while updating freshness metadata.
 - Preserve the lightweight chapter path for reference-only requests; do not download an entire translation for `select()`.
-- Keep Query and Search deployment state independent: processes, sockets, writable caches, rate limits, logs, and public response caches must not be shared.
-- Never expose raw user regular expressions through the search API.
+- Never expose raw user regular expressions through the search interface.
 - Keep default tests deterministic and independent of the live API.
 
 ## Development commands

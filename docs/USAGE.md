@@ -32,11 +32,11 @@ the operating system's user cache directory. Checksums are required
 automatically for HTTP/HTTPS repositories and optional for local repositories;
 pass `require_checksums=True` for a production local mirror.
 
-For services, construct a long-lived client rather than one client per request. The client is safe for concurrent threads, and each process receives fork-safe HTTP sessions.
+In long-running applications, construct a long-lived client rather than one client per call. The client is safe for concurrent threads, and each process receives fork-safe HTTP sessions.
 
 The cache limits are per process. Set a limit to `0` to disable that in-memory
 cache or to `None` for unbounded retention. Unbounded full translations or
-search corpora are not recommended in long-running public services.
+search corpora are not recommended in long-running applications.
 
 Close network sessions during orderly shutdown:
 

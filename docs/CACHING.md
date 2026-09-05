@@ -68,7 +68,7 @@ Resolution order:
 3. `XDG_CACHE_HOME/getbible`.
 4. `~/.cache/getbible`.
 
-For a multi-worker service, configure one writable cache directory shared by all workers:
+For a multi-process application, configure one writable cache directory shared by all processes:
 
 ```python
 bible = GetBible(cache_dir="/var/cache/getbible")
@@ -101,7 +101,7 @@ When a verified disk translation exists and the source becomes temporarily unava
 query.cache.stale = true
 ```
 
-The original SHA remains in the response. This makes availability and source state explicit to the API layer.
+The original SHA remains in the response. This makes availability and source state explicit to the application.
 
 Use strict freshness when stale responses are not acceptable:
 
@@ -144,6 +144,20 @@ worker that observes a generation committed by another worker invalidates its
 process-local caches before serving that generation. Translation metadata also
 records the source generation; an older disk snapshot becomes immediately due
 for source revalidation, even when its ordinary cache TTL has not elapsed.
+
+## Local repositories
+
+When `repo_path` is a directory rather than a URL, the full translation is
+validated and held in memory exactly as for a remote repository, but no copy
+is written under the cache directory: the source file already sits on the
+same disk, so a duplicate would buy nothing. The metadata file still records
+the validated SHA, the books-index checksum and the freshness timestamp, so
+processes share freshness state and a changed source is noticed at the next
+freshness check. A source file whose bytes no longer match the recorded SHA
+is simply re-read and re-validated.
+
+Remote repositories keep the content-addressed on-disk copy, which is what
+makes last-known-good fallback possible when the source is unreachable.
 
 ## Rotation
 
