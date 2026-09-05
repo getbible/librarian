@@ -100,6 +100,3 @@ the package's `dev` extra, before invoking the manual commands.
 - the release artifact is built once, attested, trusted-published, and reused for the GitHub release;
 - all historical parser, Unicode, search, cache, local/HTTP parity, and packaging tests still pass.
 
-## Operational gate
-
-Before deployment, verify explicit memory and task limits, restart behavior, secret-file permissions, log redaction, metrics collection, rollback to the previous release, and a bounded outage response when the upstream repository is unavailable.

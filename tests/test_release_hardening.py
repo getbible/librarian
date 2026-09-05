@@ -7,6 +7,8 @@ import time
 import unittest
 from concurrent.futures import ThreadPoolExecutor
 from datetime import timedelta
+from functools import partial
+from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from unittest.mock import patch
 
@@ -23,6 +25,11 @@ from getbible import (
 )
 
 FIXTURE_REPOSITORY = Path(__file__).parent / "fixtures" / "repository"
+
+
+class _SilentRepositoryHandler(SimpleHTTPRequestHandler):
+    def log_message(self, format: str, *args: object) -> None:
+        pass
 
 
 class ReleaseHardeningTestCase(unittest.TestCase):
@@ -122,8 +129,23 @@ class ReleaseHardeningTestCase(unittest.TestCase):
             self._bible().search("faith", "test")
 
     def test_validated_payload_is_content_addressed_and_versioned(self) -> None:
+        # Content addressing applies to remote repositories; a local directory
+        # is read in place (see tests/test_local_repository.py).
         sha = self._publish_translation_sha()
-        bible = self._bible(require_checksums=True)
+        handler = partial(_SilentRepositoryHandler, directory=str(self.repository))
+        server = ThreadingHTTPServer(("127.0.0.1", 0), handler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        self.addCleanup(thread.join, 5)
+        self.addCleanup(server.server_close)
+        self.addCleanup(server.shutdown)
+        host, port = server.server_address
+        bible = GetBible(
+            repo_path=f"http://{host}:{port}/",
+            cache_dir=self.cache,
+            require_checksums=True,
+        )
+        self.addCleanup(bible.close)
         bible.search("faith", "test")
 
         metadata_path = next(self.cache.rglob("test.metadata.json"))

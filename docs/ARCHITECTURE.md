@@ -122,13 +122,12 @@ budget cannot cover the corpus is still refused before any build starts.
 
 The grouped chapter object is the compatibility boundary. Search wraps this structure under `results` and adds `query` and `matches`. Existing verse dictionaries are returned without modifying their API fields or text.
 
-## HTTP deployment boundary
+## Two independent capabilities
 
-Librarian supplies both capabilities, but the official HTTP layer deliberately
-separates them. Query maps `GET /v2/{translation}/{reference}` to `select()`;
-Search maps `GET /v2/{translation}?q=...` to `search()`. They run with separate
-process and cache budgets. The earlier combined `/v2/search/{translation}`
-shape is not part of the supported deployment contract.
+Retrieval and search are independent. `select()` never loads a full
+translation and `search()` never needs the chapter path, so an application may
+host them in one process or in separate processes with separate cache
+directories; the library assumes neither.
 
 The source-generation layer is independent of per-translation freshness. A
 deployment activates a completed immutable mirror revision with
