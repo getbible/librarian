@@ -74,6 +74,10 @@ class GetBible(_BaseGetBible):
         require_checksums: bool | None = None,
         source_purge_callback: PurgeCallback | None = None,
         search_limits: SearchLimits | None = None,
+        shared_corpus_limit: int | None = None,
+        shared_corpus_bytes: int | None = None,
+        chapter_cache_bytes: int | None = None,
+        translation_cache_bytes: int | None = None,
     ) -> None:
         self.request_limits = request_limits or RequestLimits()
         if search_limits is None:
@@ -111,6 +115,10 @@ class GetBible(_BaseGetBible):
             require_checksums=require_checksums,
             source_purge_callback=source_purge_callback,
             search_limits=search_limits,
+            shared_corpus_limit=shared_corpus_limit,
+            shared_corpus_bytes=shared_corpus_bytes,
+            chapter_cache_bytes=chapter_cache_bytes,
+            translation_cache_bytes=translation_cache_bytes,
         )
         self._repository.max_response_bytes = self._bounded_integer(
             "max_response_bytes",
@@ -224,6 +232,10 @@ class GetBible(_BaseGetBible):
         with self._missing_translations_guard:
             self._missing_translations.clear()
 
+    def _on_translation_dropped(self, abbreviation: str) -> None:
+        with self._missing_translations_guard:
+            self._missing_translations.pop(abbreviation, None)
+
     def _validated_references(self, reference: str, abbreviation: str) -> None:
         if not isinstance(reference, str):
             raise ReferenceValidationError("Scripture reference must be a string.")
@@ -308,3 +320,4 @@ class GetBible(_BaseGetBible):
         if not minimum <= numeric <= maximum:
             raise ValueError(f"{name} must be between {minimum} and {maximum}.")
         return numeric
+

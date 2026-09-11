@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "getbible"
-version = "2.0.0"
+version = "2.1.0"
 description = "Retrieve and search Bible scripture through the GetBible API."
 readme = "README.md"
 requires-python = ">=3.10"
@@ -72,3 +72,4 @@ select = ["E", "F", "I", "UP", "B", "SIM"]
 
 [tool.bandit]
 exclude_dirs = ["tests", "src/getbible/data"]
+
