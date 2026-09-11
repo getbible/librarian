@@ -130,9 +130,43 @@ class SourceCoordinator:
                 self._thread_local.operation_depth -= 1
             return
 
+        while True:
+            self.synchronize()
+            with self._barrier.read(), self._file_barrier(shared=True):
+                state = self._read_manifest()
+                # A different process may transition between synchronize() and
+                # acquiring our shared barrier. Retry outside the reader lock
+                # so invalidation completes before this generation is served.
+                with self._state_guard:
+                    observed = self._observed
+                if state.generation != observed.generation:
+                    continue
+                self._thread_local.operation_depth = 1
+                self._thread_local.operation_state = state
+                try:
+                    yield state
+                finally:
+                    del self._thread_local.operation_state
+                    del self._thread_local.operation_depth
+                return
+
+    @contextmanager
+    def cache_maintenance(self) -> Iterator[SourceGeneration]:
+        """Exclude active source readers during explicit cache administration.
+
+        Unlike a source transition this does not change the mirror revision.
+        Its effects on resident objects apply to this client; applications with
+        multiple workers must deliver a cache command to every intended worker.
+        """
+        if getattr(self._thread_local, "operation_depth", 0):
+            raise RuntimeError("Cannot administer caches inside source_operation().")
         self.synchronize()
-        with self._barrier.read(), self._file_barrier(shared=True):
+        with self._barrier.write(), self._file_barrier(shared=False):
             state = self._read_manifest()
+            if state.generation != self._observed.generation:
+                self.invalidate_callback(state)
+                with self._state_guard:
+                    self._observed = state
             self._thread_local.operation_depth = 1
             self._thread_local.operation_state = state
             try:
@@ -300,3 +334,4 @@ class SourceCoordinator:
         if any(ord(character) < 32 or ord(character) == 127 for character in value):
             raise ValueError("source revision cannot contain control characters.")
         return value
+
