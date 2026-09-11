@@ -12,10 +12,13 @@ from __future__ import annotations
 
 import threading
 import time
+import weakref
 from collections import OrderedDict
 from collections.abc import Callable, Sequence
 from typing import Any
 
+from .._keyed_locks import KeyedLockPool
+from .._memory import UNSET, estimated_bytes
 from ..exceptions import CacheIntegrityError, SearchValidationError
 from ..translation_cache import TranslationSnapshot
 from .analysis import Analyzer, ScriptFamily, normalize_book_name
@@ -82,6 +85,10 @@ class TranslationCorpus:
         self._index_locks: dict[tuple[bool, bool], threading.Lock] = {}
         self._guard = threading.Lock()
         self._state_lock = threading.Lock()
+        self._base_bytes = estimated_bytes((
+            self.translation_metadata, self.chapter_metadata, self.records, self.texts,
+            self.available_books, self.book_names,
+        ))
 
     def refresh_state(self, snapshot: TranslationSnapshot) -> None:
         """Adopt freshness metadata without rebuilding unchanged indexes."""
@@ -135,7 +142,8 @@ class TranslationCorpus:
                 Analyzer(case_sensitive=case_sensitive, fold_diacritics=fold_diacritics),
                 checkpoint,
             )
-            self._indexes[key] = built
+            with self._guard:
+                self._indexes[key] = built
             return built
 
     @property
@@ -144,6 +152,13 @@ class TranslationCorpus:
             return index.dominant_family
         return self.index().dominant_family
 
+    @property
+    def estimated_bytes(self) -> int:
+        # Built views are bounded (four policies); no walk of the corpus occurs
+        # on a warm request or telemetry read.
+        with self._guard:
+            return self._base_bytes + sum(index.estimated_bytes for index in self._indexes.values())
+
     def cache_info(self) -> dict[str, Any]:
         checked_at, stale = self.cache_state()
         return {
@@ -151,6 +166,8 @@ class TranslationCorpus:
             "checked_at": checked_at,
             "stale": stale,
             "verses": len(self.records),
+            "estimated_bytes": self.estimated_bytes,
+            "memory_measurement": "estimated_python_objects_not_rss",
             "indexes": [
                 {"case_sensitive": case_sensitive, "fold_diacritics": fold}
                 for case_sensitive, fold in sorted(self._indexes)
@@ -229,64 +246,106 @@ class CorpusRegistry:
     stops a service paying the parse-and-analyse cost per client object.
     """
 
-    def __init__(self, limit: int = 8) -> None:
+    def __init__(self, limit: int = 8, memory_bytes: int | None = None) -> None:
         self._entries: OrderedDict[tuple[str, str, str], TranslationCorpus] = OrderedDict()
-        self._limit = max(1, int(limit))
+        self._live: weakref.WeakValueDictionary[tuple[str, str, str], TranslationCorpus] = (
+            weakref.WeakValueDictionary()
+        )
+        self._limit = self._validated_limit("limit", limit, nullable=False)
+        self._memory_bytes = self._validated_limit("memory_bytes", memory_bytes)
         self._lock = threading.Lock()
+        self._build_locks = KeyedLockPool()
         self.hits = 0
         self.misses = 0
         self.evictions = 0
 
     def acquire(
-        self,
-        repository: str,
-        abbreviation: str,
-        snapshot: TranslationSnapshot,
+        self, repository: str, abbreviation: str, snapshot: TranslationSnapshot,
     ) -> TranslationCorpus:
         key = (repository, abbreviation, snapshot.sha)
-        with self._lock:
-            corpus = self._entries.get(key)
-            if corpus is not None:
-                self._entries.move_to_end(key)
-                self.hits += 1
-                corpus.refresh_state(snapshot)
-                return corpus
-            self.misses += 1
-        corpus = TranslationCorpus(snapshot)
-        with self._lock:
-            existing = self._entries.get(key)
-            if existing is not None:
-                self._entries.move_to_end(key)
-                existing.refresh_state(snapshot)
-                return existing
-            self._entries[key] = corpus
-            while len(self._entries) > self._limit:
-                self._entries.popitem(last=False)
-                self.evictions += 1
+        # Serializing one key prevents simultaneous first callers from parsing
+        # duplicate corpora. Unrelated translations can still load concurrently.
+        with self._build_locks.hold(key):
+            with self._lock:
+                corpus = self._live.get(key)
+                if corpus is not None:
+                    self.hits += 1
+                    corpus.refresh_state(snapshot)
+                    already_retained = key in self._entries
+                    self._entries[key] = corpus
+                    self._entries.move_to_end(key)
+                    if not already_retained:
+                        self._trim()
+                    return corpus
+                self.misses += 1
+            corpus = TranslationCorpus(snapshot)
+            with self._lock:
+                self._live[key] = corpus
+                self._entries[key] = corpus
+                # Retain only the current SHA strongly. In-flight searches hold
+                # their immutable previous corpus until they finish naturally.
+                for previous in list(self._entries):
+                    if previous[:2] == key[:2] and previous != key:
+                        del self._entries[previous]
+                self._trim()
             return corpus
 
-    def resize(self, limit: int) -> None:
+    def resize(self, limit: int, *, memory_bytes: Any = UNSET) -> None:
+        """Configure process-wide strong retention; zero disables retention."""
+        limit = self._validated_limit("limit", limit, nullable=False)
+        if memory_bytes is not UNSET:
+            self._validated_limit("memory_bytes", memory_bytes)
         with self._lock:
-            self._limit = max(1, int(limit))
-            while len(self._entries) > self._limit:
-                self._entries.popitem(last=False)
-                self.evictions += 1
+            self._limit = limit
+            if memory_bytes is not UNSET:
+                self._memory_bytes = memory_bytes
+            self._trim()
+
+    def enforce_budget(self) -> None:
+        """Recheck capacity after a new lazy index has been built."""
+        with self._lock:
+            self._trim()
+
+    def _trim(self) -> None:
+        total = sum(corpus.estimated_bytes for corpus in self._entries.values())
+        while self._entries and (
+            len(self._entries) > self._limit
+            or (self._memory_bytes is not None and total > self._memory_bytes)
+        ):
+            _, corpus = self._entries.popitem(last=False)
+            total -= corpus.estimated_bytes
+            self.evictions += 1
 
     def discard(self, repository: str, abbreviation: str | None = None) -> None:
         with self._lock:
-            for key in list(self._entries):
+            for key in list(self._live):
                 if key[0] == repository and (abbreviation is None or key[1] == abbreviation):
-                    del self._entries[key]
+                    self._entries.pop(key, None)
+                    self._live.pop(key, None)
 
     def info(self) -> dict[str, Any]:
         with self._lock:
             return {
                 "entries": len(self._entries),
                 "limit": self._limit,
+                "memory_bytes_limit": self._memory_bytes,
+                "estimated_bytes": sum(corpus.estimated_bytes for corpus in self._entries.values()),
+                "memory_measurement": "estimated_python_objects_not_rss",
+                "active_or_client_retained_entries": len(self._live),
                 "hits": self.hits,
                 "misses": self.misses,
                 "evictions": self.evictions,
+                "active_build_locks": self._build_locks.size,
             }
+
+    @staticmethod
+    def _validated_limit(name: str, value: Any, *, nullable: bool = True) -> Any:
+        if value is None and nullable:
+            return None
+        if not isinstance(value, int) or isinstance(value, bool) or value < 0:
+            suffix = " or null." if nullable else "."
+            raise ValueError(f"{name} must be a non-negative integer" + suffix)
+        return value
 
 
 _SHARED = CorpusRegistry()
@@ -295,3 +354,4 @@ _SHARED = CorpusRegistry()
 def shared_registry() -> CorpusRegistry:
     """Return the registry every ``GetBible`` in this process shares."""
     return _SHARED
+

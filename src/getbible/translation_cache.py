@@ -19,6 +19,7 @@ from typing import Any
 from filelock import FileLock
 
 from ._keyed_locks import KeyedLockPool
+from ._memory import UNSET, estimated_bytes
 from .exceptions import (
     CacheIntegrityError,
     RepositoryError,
@@ -94,6 +95,7 @@ class TranslationCache:
         memory_limit: int | None = 4,
         refresh_jitter: float = 0.1,
         require_checksums: bool = False,
+        memory_bytes: int | None = None,
     ) -> None:
         self.repository = repository
         self.refresh_seconds = max(0.0, refresh_seconds)
@@ -111,6 +113,8 @@ class TranslationCache:
         if not 0 <= refresh_jitter < 1:
             raise ValueError("refresh_jitter must be between 0 (inclusive) and 1.")
         self.refresh_jitter = float(refresh_jitter)
+        self.memory_bytes = self._validated_limit("memory_bytes", memory_bytes)
+        self._sizes: dict[str, int] = {}
         self._memory: OrderedDict[str, TranslationSnapshot] = OrderedDict()
         self._source_generation = 0
         self._locks = KeyedLockPool()
@@ -124,14 +128,14 @@ class TranslationCache:
             "evictions": 0,
         }
 
-    def load(self, abbreviation: str) -> TranslationSnapshot:
+    def load(self, abbreviation: str, *, force: bool = False) -> TranslationSnapshot:
         """Return a fresh or last-known-good translation snapshot."""
         now = time.time()
         with self._guard:
             memory = self._memory.get(abbreviation)
             if memory is not None:
                 self._memory.move_to_end(abbreviation)
-        if memory is not None and self._is_fresh(abbreviation, memory, now):
+        if not force and memory is not None and self._is_fresh(abbreviation, memory, now):
             self._increment("memory_hits")
             return memory
 
@@ -141,7 +145,7 @@ class TranslationCache:
                 memory = self._memory.get(abbreviation)
                 if memory is not None:
                     self._memory.move_to_end(abbreviation)
-            if memory is not None and self._is_fresh(abbreviation, memory, now):
+            if not force and memory is not None and self._is_fresh(abbreviation, memory, now):
                 self._increment("memory_hits")
                 return memory
 
@@ -164,7 +168,7 @@ class TranslationCache:
                     disk = self._read_disk(paths, metadata)
                 if disk is None and memory is not None:
                     disk = memory
-                if disk is not None and self._is_fresh(abbreviation, disk, now):
+                if not force and disk is not None and self._is_fresh(abbreviation, disk, now):
                     self._increment("disk_hits")
                     return self._remember(abbreviation, disk)
 
@@ -203,8 +207,54 @@ class TranslationCache:
         with self._guard:
             if abbreviation is None:
                 self._memory.clear()
+                self._sizes.clear()
             else:
                 self._memory.pop(abbreviation, None)
+                self._sizes.pop(abbreviation, None)
+
+    def configure(
+        self, *, refresh_seconds: float | None = None, refresh_jitter: float | None = None,
+        memory_limit: Any = UNSET, memory_bytes: Any = UNSET,
+    ) -> None:
+        """Update validated retention policy without dropping unchanged data."""
+        if refresh_seconds is not None and (
+            not isinstance(refresh_seconds, (int, float))
+            or isinstance(refresh_seconds, bool)
+            or not math.isfinite(refresh_seconds) or refresh_seconds < 0
+        ):
+            raise ValueError("refresh_seconds must be finite and non-negative.")
+        if refresh_jitter is not None and (
+            not isinstance(refresh_jitter, (int, float))
+            or isinstance(refresh_jitter, bool) or not 0 <= refresh_jitter < 1
+        ):
+            raise ValueError("refresh_jitter must be between 0 (inclusive) and 1.")
+        for name, value in (("memory_limit", memory_limit), ("memory_bytes", memory_bytes)):
+            if value is not UNSET:
+                self._validated_limit(name, value)
+        with self._guard:
+            if refresh_seconds is not None:
+                self.refresh_seconds = float(refresh_seconds)
+            if refresh_jitter is not None:
+                self.refresh_jitter = float(refresh_jitter)
+            if memory_limit is not UNSET:
+                self.memory_limit = memory_limit
+            if memory_bytes is not UNSET:
+                self.memory_bytes = memory_bytes
+            self._trim()
+
+    def drop(self, abbreviation: str, *, disk: bool = False) -> None:
+        """Drop a validated translation cache; never delete repository source files."""
+        with self._locks.hold(abbreviation):
+            self.invalidate(abbreviation)
+            if disk:
+                paths = self._paths(abbreviation)
+                if paths["directory"].exists():
+                    with FileLock(str(paths["lock"]), timeout=self.lock_timeout):
+                        metadata = self._read_metadata(paths)
+                        with suppress(FileNotFoundError):
+                            paths["metadata"].unlink()
+                        if metadata is not None and metadata.payload != self.SOURCE_PAYLOAD:
+                            (paths["objects"] / metadata.payload).unlink(missing_ok=True)
 
     def set_source_generation(self, generation: int) -> None:
         """Expire retained state after an immutable source transition."""
@@ -214,6 +264,7 @@ class TranslationCache:
             if generation != self._source_generation:
                 self._source_generation = generation
                 self._memory.clear()
+                self._sizes.clear()
 
     def cache_info(self) -> dict[str, Any]:
         """Return a JSON-friendly snapshot of translation-cache state."""
@@ -223,12 +274,19 @@ class TranslationCache:
                     "sha": snapshot.sha,
                     "checked_at": snapshot.checked_at,
                     "stale": snapshot.stale,
+                    "estimated_bytes": self._sizes.get(code, 0),
                 }
                 for code, snapshot in self._memory.items()
             }
             stats = dict(self._stats)
         return {
             "size": len(translations),
+            "estimated_bytes": sum(item["estimated_bytes"] for item in translations.values()),
+            "memory_measurement": "estimated_python_objects_not_rss",
+            "memory_bytes_limit": self.memory_bytes,
+            "ttl_seconds": self.refresh_seconds,
+            "ttl_jitter": self.refresh_jitter,
+            "source_generation": self._source_generation,
             "limit": self.memory_limit,
             "active_locks": self._locks.size,
             "translations": translations,
@@ -858,18 +916,33 @@ class TranslationCache:
         self, abbreviation: str, snapshot: TranslationSnapshot
     ) -> TranslationSnapshot:
         with self._guard:
-            if self.memory_limit == 0:
+            previous = self._memory.get(abbreviation)
+            size = (
+                self._sizes[abbreviation]
+                if previous is not None and previous.data is snapshot.data
+                else estimated_bytes(snapshot.data)
+            )
+            if self.memory_limit == 0 or (
+                self.memory_bytes is not None and size > self.memory_bytes
+            ):
                 self._memory.pop(abbreviation, None)
+                self._sizes.pop(abbreviation, None)
+                self._stats["evictions"] += 1
                 return snapshot
             self._memory[abbreviation] = snapshot
+            self._sizes[abbreviation] = size
             self._memory.move_to_end(abbreviation)
-            while (
-                self.memory_limit is not None
-                and len(self._memory) > self.memory_limit
-            ):
-                self._memory.popitem(last=False)
-                self._stats["evictions"] += 1
+            self._trim()
         return snapshot
+
+    def _trim(self) -> None:
+        while self._memory and (
+            (self.memory_limit is not None and len(self._memory) > self.memory_limit)
+            or (self.memory_bytes is not None and sum(self._sizes.values()) > self.memory_bytes)
+        ):
+            code, _ = self._memory.popitem(last=False)
+            self._sizes.pop(code, None)
+            self._stats["evictions"] += 1
 
     def _is_fresh(
         self,
@@ -910,3 +983,4 @@ class TranslationCache:
             and len(value) == 40
             and all(character in "0123456789abcdef" for character in value.lower())
         )
+

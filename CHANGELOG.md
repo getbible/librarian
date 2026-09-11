@@ -2,6 +2,19 @@
 
 All notable project changes are documented here.
 
+## 2.1.0 - Unreleased
+
+- Add validated public cache reconfiguration for freshness intervals, entry
+  limits, and estimated-byte retention budgets without dropping unchanged data.
+- Add explicit `warm_query`, `drop_translation`, and `reload_translation`
+  lifecycle methods with coordinated source-reader exclusion for maintenance.
+- Expose query chapter, translation snapshot, corpus/index and shared-registry
+  memory estimates, configured limits, freshness and source generation metadata.
+- Preserve corpora still borrowed by callers when the shared registry evicts a
+  strong entry; serialize concurrent corpus construction and trigram building.
+- Preserve lightweight lazy reference retrieval, immutable request data and
+  last-known-good checksum validation. No cache-maintenance threads are added.
+
 ## [2.0.0] - Unreleased
 
 Search derives its matching strategy from the text. An application supplies a
@@ -165,3 +178,4 @@ query string; it no longer decides how a writing system should be read.
 ## [1.1.2] - 2023-12-11
 
 - Stabilized reference validation and Hebrew reference coverage.
+

@@ -15,11 +15,13 @@ and cost proportional to how many verses match rather than to vocabulary size.
 
 from __future__ import annotations
 
+import threading
 from array import array
 from collections.abc import Iterable, Iterator, Sequence
 from dataclasses import dataclass, field
 from typing import Final
 
+from .._memory import estimated_bytes
 from .analysis import Analyzer, ScriptFamily, Token, script_census
 
 __all__ = ["Postings", "SearchIndex", "build_index", "chain_matches", "merge_verses"]
@@ -77,6 +79,19 @@ class SearchIndex:
     build_work_units: int
     _trigrams: dict[str, list[str]] | None = field(default=None, repr=False)
 
+    _base_bytes: int = field(default=0, init=False, repr=False)
+    _trigram_bytes: int = field(default=0, init=False, repr=False)
+    _trigram_lock: threading.Lock = field(default_factory=threading.Lock, init=False, repr=False)
+
+    def __post_init__(self) -> None:
+        self._base_bytes = estimated_bytes((
+            self.analyzer, self.texts, self.postings, self.document_frequency, self.families,
+        ))
+
+    @property
+    def estimated_bytes(self) -> int:
+        return self._base_bytes + self._trigram_bytes
+
     def get(self, term: str) -> Postings | None:
         return self.postings.get(term)
 
@@ -132,16 +147,18 @@ class SearchIndex:
                 yield term
 
     def _trigram_table(self) -> dict[str, list[str]]:
-        table = self._trigrams
-        if table is None:
-            table = {}
-            for term in self.postings:
-                if len(term) < _TRIGRAM:
-                    continue
-                for index in range(len(term) - _TRIGRAM + 1):
-                    table.setdefault(term[index:index + _TRIGRAM], []).append(term)
-            self._trigrams = table
-        return table
+        with self._trigram_lock:
+            table = self._trigrams
+            if table is None:
+                table = {}
+                for term in self.postings:
+                    if len(term) < _TRIGRAM:
+                        continue
+                    for index in range(len(term) - _TRIGRAM + 1):
+                        table.setdefault(term[index:index + _TRIGRAM], []).append(term)
+                self._trigram_bytes = estimated_bytes(table)
+                self._trigrams = table
+            return table
 
 
 def build_index(
@@ -259,3 +276,4 @@ def merge_verses(groups: Iterable[Iterable[int]]) -> set[int]:
         if not result:
             return set()
     return result or set()
+
