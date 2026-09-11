@@ -198,10 +198,12 @@ class ResidentCacheTests(unittest.TestCase):
                 other.transition_source("concurrent-revision")
             return state
 
-        with patch.object(coordinator, "synchronize", side_effect=synchronize_then_transition):
-            with self.bible.source_operation() as source:
-                self.assertEqual(source.generation, 1)
-                self.assertEqual(self.bible.cache_info()["query_translations"], {})
+        with (
+            patch.object(coordinator, "synchronize", side_effect=synchronize_then_transition),
+            self.bible.source_operation() as source,
+        ):
+            self.assertEqual(source.generation, 1)
+            self.assertEqual(self.bible.cache_info()["query_translations"], {})
 
     def test_registry_zero_and_invalid_limits(self):
         self.assertEqual(CorpusRegistry(limit=0).info()["limit"], 0)
