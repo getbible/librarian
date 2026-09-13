@@ -20,6 +20,11 @@ python -m pip install getbible
 
 Python 3.10 or newer is required.
 
+Version 3.0 narrows translation metadata in reference and search responses to
+six API fields. See the [field contract and migration](docs/TRANSLATION_METADATA.md)
+before upgrading from 2.x. This source prepares `3.0.0`; pin
+`getbible==3.0.0` after that version has been published.
+
 ## Retrieve scripture
 
 ```python
@@ -38,6 +43,11 @@ print(encoded)
 ```
 
 `select()` returns the established chapter-keyed dictionary. `scripture()` returns the same structure encoded as JSON.
+
+Each chapter includes only these translation fields: `translation`,
+`abbreviation`, `lang`, `language`, `direction`, and `encoding`, as present in
+the source. Book/chapter metadata, `ref`, and `verses` keep their existing
+structure.
 
 ## Search scripture
 
@@ -75,6 +85,10 @@ Search responses contain three top-level objects:
 - `query`: normalized criteria, translation metadata, exact total, pagination, SHA, cache state, and deterministic search cost.
 - `results`: the same grouped scripture object format returned by `select()`.
 - `matches`: ordered per-verse match metadata, including score, occurrences, and matched terms.
+
+`query.translation` contains the same six translation fields used by chapter
+results. Full translation history and other supplemental metadata can be
+retrieved separately from the existing [translation catalogue](https://api.getbible.net/v2/translations.json).
 
 This keeps existing scripture templates reusable. With relevance sorting, `matches` is the authoritative cross-chapter order.
 
@@ -161,6 +175,7 @@ manager in short-lived scripts.
 
 - [Usage and reference retrieval](docs/USAGE.md)
 - [Search criteria and response contract](docs/SEARCH.md)
+- [Translation metadata and the 3.0 migration](docs/TRANSLATION_METADATA.md)
 - [Cache validation and retention](docs/CACHING.md)
 - [Architecture](docs/ARCHITECTURE.md)
 - [Multi-process operations](docs/OPERATIONS.md)

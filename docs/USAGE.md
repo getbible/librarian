@@ -71,6 +71,19 @@ kjv_45_8
 
 Each grouped object contains translation metadata, book and chapter metadata, the input references that contributed to the group, and an ordered `verses` list.
 
+Starting with 3.0, the only translation fields are `translation`,
+`abbreviation`, `lang`, `language`, `direction`, and `encoding`, copied as
+present in the source. The remaining chapter fields are `book_nr`, `book_name`,
+`chapter`, `name`, `ref`, and `verses`. The translation name is `translation`;
+`name` remains the chapter name. Valid empty optional metadata stays empty,
+and omitted optional metadata stays absent.
+
+History and other supplemental translation metadata are available separately
+from the existing [API translation catalogue](https://api.getbible.net/v2/translations.json).
+See [Translation metadata and the 3.0 migration](TRANSLATION_METADATA.md) for
+the complete field contract and upgrade guidance. Direct references and
+references served after explicit cache warming follow the same contract.
+
 ## Select verses as JSON
 
 ```python

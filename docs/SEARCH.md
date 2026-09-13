@@ -180,12 +180,28 @@ many intervening units.
 scripture templates keep working. `matches` is the authoritative order when
 sorting by relevance.
 
+In 3.0, `query.translation` contains only `translation`, `abbreviation`, `lang`,
+`language`, `direction`, and `encoding`, as present in the validated source.
+Those same translation fields appear at the top level of each chapter under
+`results`. No history, description, license data, or other supplemental
+translation metadata is included, even when the search returns no matches.
+Existing source values, accepted empty values, and omitted optional fields are
+preserved. Full translation details can be fetched separately from the
+[API translation catalogue](https://api.getbible.net/v2/translations.json).
+See the [3.0 migration](TRANSLATION_METADATA.md#upgrade-from-2x).
+
 ```text
 query
   text
   criteria
   engine_version
   translation
+    translation
+    abbreviation
+    lang
+    language
+    direction
+    encoding
   sha
   total
   offset
@@ -211,9 +227,11 @@ matches
   score, occurrences, terms
 ```
 
-`engine_version` is `4`. It moves whenever matching semantics change, so a
-downstream result cache can be invalidated without waiting for a translation SHA
-to change. **Key your response cache on it.**
+`engine_version` is `5`. It moves whenever matching or search-response semantics
+change, so a downstream result cache can be invalidated without waiting for a
+translation SHA to change. Version 3.0 increments it from `4` because translation
+metadata is slimmer, even though matching is unchanged. **Key your response
+cache on it.**
 
 `SearchBible.expensive` is available before a translation is loaded and is the
 right signal for budgeting expensive searches. Diacritic folding is no longer part of it:
@@ -239,6 +257,9 @@ Concurrent first requests wait on one build rather than each starting their own.
 A search still refuses an unusable work budget before any index is built.
 
 ## Migrating from 1.x
+
+The following describes the matching changes introduced in 2.0. Upgrading to
+3.0 also requires the [translation metadata migration](TRANSLATION_METADATA.md#upgrade-from-2x).
 
 ### Delete the match-mode selection
 
@@ -276,8 +297,11 @@ is there to key that on.
   of `diacritics` (string).
 - `warm_translation()` takes `diacritics="fold"` by default and returns an
   `analysis` block.
-- `SEARCH_ENGINE_VERSION` is `4`.
+- 2.0 changed `SEARCH_ENGINE_VERSION` to `4`; 3.0 changes it to `5` for the
+  slimmer translation metadata contract.
 - `getbible.search` is a package. Every public name still imports from
   `getbible` and from `getbible.search`; the internal `_Matcher` class is gone.
 
-`select()`, `scripture()`, and the `results` structure are unchanged.
+The 2.0 matching changes preserved `select()`, `scripture()`, and the `results`
+structure. Version 3.0 preserves their chapter/verse structure while removing
+supplemental translation metadata as documented above.

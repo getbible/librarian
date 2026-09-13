@@ -26,6 +26,9 @@ The primary project home remains <https://git.vdm.dev/getBible/librarian>. GitHu
 - A bare `search(query, translation)` call must return correct results for every translation the API publishes.
 - `search()["results"]` must retain the same chapter and verse object structure as `select()`.
 - Additive metadata is allowed. Removing or renaming existing scripture fields requires an explicit compatibility decision and migration documentation.
+- Version 3.0 explicitly removes supplemental translation metadata from reference and search responses. The only allowed translation fields are `translation`, `abbreviation`, `lang`, `language`, `direction`, and `encoding`, both in grouped chapters and in `search()["query"]["translation"]`. Preserve existing book/chapter fields, `ref`, verse dictionaries, and the search envelope. This approved compatibility decision is documented in `docs/TRANSLATION_METADATA.md`; do not restore history, descriptions, license data, or other translation fields as a compatibility fix.
+- Use the shared `_result_metadata.py` projections for every result assembly path, including directly fetched and explicitly warmed reference chapters. Preserve valid source values, including accepted empty values and omitted optional fields; do not invent fallback metadata. Full metadata remains available from the existing static API `/v2/translations.json`.
+- Increment `SEARCH_ENGINE_VERSION` when search response semantics change as well as when matching semantics change; version 3.0 uses `5` to invalidate search responses containing full translation metadata.
 - Translation abbreviations are lowercase API identifiers and must be validated with a full match.
 
 ## Documentation scope
@@ -88,6 +91,7 @@ others points at an analysis regression:
 ## Test expectations
 
 - Add offline fixture coverage for every new search criterion or response field.
+- Assert the exact translation-field allowlist in reference and search results, including empty search pages, JSON wrappers, warmed/reloaded references, supplemental upstream metadata, and missing/empty optional metadata.
 - Test cache checksum rejection and stale fallback behavior.
 - Test concurrent access when changing cache or corpus coordination.
 - Run the live suite before a release.

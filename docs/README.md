@@ -2,6 +2,7 @@
 
 - [Usage and public retrieval API](USAGE.md)
 - [Search API and result contract](SEARCH.md)
+- [Translation metadata and the 3.0 migration](TRANSLATION_METADATA.md)
 - [Hardening and request budgets](HARDENING.md)
 - [Caching and SHA validation](CACHING.md)
 - [Internal architecture](ARCHITECTURE.md)

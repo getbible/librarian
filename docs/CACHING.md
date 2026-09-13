@@ -2,6 +2,23 @@
 
 Librarian uses separate strategies for lightweight reference retrieval and full-translation search.
 
+## Result contract versioning
+
+Librarian 3.0 projects reference and search translation metadata to the six API
+fields described in [Translation metadata](TRANSLATION_METADATA.md). Complete
+source payloads remain subject to the same validation and checksum rules;
+existing verified source caches can be reused.
+
+Application-owned response caches are a separate concern. Invalidate old
+reference responses or include the library response version in their keys.
+Include `SEARCH_ENGINE_VERSION` (now `5`, previously `4`) in search response
+keys. Neither a source SHA nor a source-generation namespace changes solely
+because the library's response contract changes.
+
+The same projection applies when reference chapters come from `warm_query()`
+or `reload_translation()`, so warming cannot reintroduce supplemental
+translation metadata.
+
 ## Chapter cache
 
 `select()` requests only the required chapter. The parsed chapter is retained in memory with direct verse lookup by verse number.

@@ -15,6 +15,7 @@
 | Module | Responsibility |
 |---|---|
 | `getbible.py` | Public facade, grouped scripture output, and cache coordination |
+| `_result_metadata.py` | Shared translation and chapter metadata projections for reference and search results |
 | `repository_client.py` | Remote/local resource access, retries, timeouts, and fork-safe connection pooling |
 | `translation_cache.py` | SHA validation, disk persistence, atomic replacement, and stale fallback |
 | `source_generation.py` | Atomic mirror generations, cross-worker barriers, response-cache namespaces, and invalidation |
@@ -121,6 +122,19 @@ budget cannot cover the corpus is still refused before any build starts.
 ## Compatibility boundary
 
 The grouped chapter object is the compatibility boundary. Search wraps this structure under `results` and adds `query` and `matches`. Existing verse dictionaries are returned without modifying their API fields or text.
+
+Version 3.0 intentionally narrows translation metadata to `translation`,
+`abbreviation`, `lang`, `language`, `direction`, and `encoding`. The shared
+`_result_metadata.py` projections are used by search corpora, reference result
+assembly, and explicit reference warming so arbitrary source translation
+metadata cannot escape through a different cache path. Source validation and
+checksum calculation continue to operate on the complete source payload.
+
+Book/chapter identity, `ref`, verse dictionaries, and the search envelope stay
+in place. `query.translation` uses the same translation projection as grouped
+chapters. Preserve existing values and optional-field behavior, and do not
+restore full metadata pass-through. This is an approved breaking decision with
+[migration guidance](TRANSLATION_METADATA.md), not missing metadata to repair.
 
 ## Two independent capabilities
 

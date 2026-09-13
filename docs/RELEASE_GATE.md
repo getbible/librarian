@@ -96,7 +96,8 @@ the package's `dev` extra, before invoking the manual commands.
 - production full-translation and chapter checksums are required and compared;
 - invalid upstream refreshes preserve the last-known-good corpus;
 - Query and Search return deep copies that cannot corrupt cached verses or metadata;
+- reference chapters and search `query.translation` contain only the six allowed translation fields, preserving valid omitted/empty metadata and excluding supplemental source metadata;
+- direct, warmed, and reloaded references share the same slim contract; JSON wrappers, empty searches, and empty search pages follow it as well;
 - source-generation purge failures do not commit and successful transitions invalidate other workers;
 - the release artifact is built once, attested, trusted-published, and reused for the GitHub release;
 - all historical parser, Unicode, search, cache, local/HTTP parity, and packaging tests still pass.
-

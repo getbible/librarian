@@ -2,6 +2,38 @@
 
 All notable project changes are documented here.
 
+## [3.0.0] - Unreleased
+
+### Changed
+
+- **Intentional breaking response-contract change:** reference and search
+  results expose only the API translation fields `translation`, `abbreviation`,
+  `lang`, `language`, `direction`, and `encoding`. Search `query.translation`
+  uses the same projection as grouped chapter results. Translation history,
+  descriptions, distribution/license metadata, and other supplemental
+  translation fields are no longer repeated in responses.
+- Apply the same projection to direct chapter retrieval and chapters populated
+  by `warm_query()` or `reload_translation()`. Preserve chapter keys, book and
+  chapter identity, references, verse dictionaries, search matching, match
+  ordering, pagination, SHA, and cache metadata.
+- Preserve source values and existing validation of optional metadata: absent
+  fields remain absent, and accepted empty values remain empty.
+- Bump `SEARCH_ENGINE_VERSION` from `4` to `5` so external search-result caches
+  can distinguish the slimmer contract even when the source SHA is unchanged.
+- Keep full source translations and their integrity checks intact. Clients
+  needing the complete translation catalogue can fetch the existing static
+  API `/v2/translations.json` separately.
+
+### Migration
+
+- See [Translation metadata and the 3.0 migration](docs/TRANSLATION_METADATA.md)
+  for the field contract, metadata lookup, and response-cache migration.
+- This major version records the approved field removal. Updating source or
+  chapter metadata must not restore automatic pass-through of supplemental
+  translation fields.
+- Version `3.0.0` is prepared here; a `getbible==3.0.0` dependency pin becomes
+  available after the release workflow publishes it.
+
 ## 2.1.0 - Unreleased
 
 - Add validated public cache reconfiguration for freshness intervals, entry
@@ -178,4 +210,3 @@ query string; it no longer decides how a writing system should be read.
 ## [1.1.2] - 2023-12-11
 
 - Stabilized reference validation and Hebrew reference coverage.
-
