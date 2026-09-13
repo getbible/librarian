@@ -49,10 +49,18 @@ The artifact can be downloaded and installed in a clean environment before relea
 
 ## Release preparation
 
+The next prepared version is `3.0.0`. It is a major version because it removes
+supplemental translation fields from public reference and search responses.
+Review the [migration contract](TRANSLATION_METADATA.md), including
+`SEARCH_ENGINE_VERSION=5`, before publication. The package version in a source
+checkout is preparation only; consumers can pin `getbible==3.0.0` after PyPI
+publication succeeds. Before then, use the reviewed checkout, its built wheel,
+or an immutable full-commit source pin for validation.
+
 1. Run the local release gate and resolve every failure.
 2. Confirm the exact `staging` commit has a green **CI** workflow run.
 3. Manually run **Live API Integration** for the same `staging` commit.
-4. Review `CHANGELOG.md` and replace `Unreleased` with the release date.
+4. Review `CHANGELOG.md` and replace the current version's `Unreleased` with the release date.
 5. Confirm the version in `pyproject.toml`.
 6. Merge the exact release state into `master`.
 7. Open the GitHub Actions **Release** workflow, choose **Run workflow**, and enter the version without the leading `v`.
