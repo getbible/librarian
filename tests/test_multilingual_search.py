@@ -196,10 +196,10 @@ class TestSubstringPolicy(TestMultilingualSearch):
 
 
 class TestResponseContract(TestMultilingualSearch):
-    def test_engine_version_marks_the_matching_change(self) -> None:
+    def test_engine_version_marks_matching_and_response_changes(self) -> None:
         # Downstream result caches key on this, so it must move when matching
-        # semantics change without a translation SHA changing.
-        self.assertEqual(self._search("神")["query"]["engine_version"], 4)
+        # semantics or response metadata change without a translation SHA changing.
+        self.assertEqual(self._search("神")["query"]["engine_version"], 5)
 
     def test_the_response_reports_how_the_translation_was_read(self) -> None:
         self.assertEqual(

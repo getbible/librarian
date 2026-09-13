@@ -19,6 +19,7 @@ from typing import Any
 
 from ._keyed_locks import KeyedLockPool
 from ._memory import UNSET, estimated_bytes
+from ._result_metadata import chapter_metadata, translation_metadata
 from .exceptions import (
     CacheIntegrityError,
     RepositoryResourceNotFound,
@@ -183,7 +184,7 @@ class GetBible:
         self._translation_cache.set_source_generation(int(initial_generation))
 
     def select(self, reference: str, abbreviation: str | None = 'kjv') -> dict[str, Any]:
-        """Return Bible verses using the established grouped result contract."""
+        """Return grouped Bible verses with the six API translation labels."""
         with self.source_operation():
             abbreviation = self._validated_translation_code(abbreviation)
             self.__check_translation(abbreviation)
@@ -213,7 +214,9 @@ class GetBible:
 
         ``results`` uses the same chapter-keyed object structure returned by
         :meth:`select`. ``query`` and ``matches`` add search-specific metadata
-        without changing the established scripture objects.
+        without changing the chapter and verse structure. Translation metadata
+        in both ``query.translation`` and chapters is limited to the six API
+        labels: translation, abbreviation, lang, language, direction, encoding.
         """
         with self.source_operation():
             code = self._validated_translation_code(abbreviation)
@@ -322,9 +325,7 @@ class GetBible:
                 snapshot = self._translation_cache.load(code)
                 stale = snapshot.stale
                 loaded_at = time.monotonic() - max(0.0, time.time() - snapshot.checked_at)
-                metadata = {
-                    key: value for key, value in snapshot.data.items() if key != "books"
-                }
+                metadata = translation_metadata(snapshot.data)
                 for book in snapshot.data["books"]:
                     for chapter in book["chapters"]:
                         payload = {
@@ -790,11 +791,7 @@ class GetBible:
                     result[cache_key]["ref"].append(book_ref.reference)
                 continue
 
-            result[cache_key] = {
-                key: deepcopy(value)
-                for key, value in chapter_data.items()
-                if key != "verses"
-            }
+            result[cache_key] = chapter_metadata(chapter_data)
             result[cache_key]["ref"] = [book_ref.reference]
             result[cache_key]["verses"] = [deepcopy(verse_info)]
 
@@ -945,4 +942,3 @@ class GetBible:
         if value < 0:
             raise ValueError(f"{name} cannot be negative.")
         return value
-
