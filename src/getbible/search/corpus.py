@@ -19,6 +19,7 @@ from typing import Any
 
 from .._keyed_locks import KeyedLockPool
 from .._memory import UNSET, estimated_bytes
+from .._result_metadata import translation_metadata
 from ..exceptions import CacheIntegrityError, SearchValidationError
 from ..translation_cache import TranslationSnapshot
 from .analysis import Analyzer, ScriptFamily, normalize_book_name
@@ -61,22 +62,12 @@ class VerseRecord:
 class TranslationCorpus:
     """Canonical verse records with lazily built, analysed indexes."""
 
-    _CHAPTER_METADATA = (
-        "translation", "abbreviation", "lang", "language", "direction", "encoding"
-    )
-
     def __init__(self, snapshot: TranslationSnapshot) -> None:
         self.sha = snapshot.sha
         self.checked_at = snapshot.checked_at
         self.stale = snapshot.stale
-        self.translation_metadata = {
-            key: value for key, value in snapshot.data.items() if key != "books"
-        }
-        self.chapter_metadata = {
-            key: snapshot.data[key]
-            for key in self._CHAPTER_METADATA
-            if key in snapshot.data
-        }
+        self.translation_metadata = translation_metadata(snapshot.data)
+        self.chapter_metadata = translation_metadata(snapshot.data)
         self.records = self._build_records(snapshot.data)
         self.texts = tuple(record.text for record in self.records)
         self.available_books = frozenset(record.book_nr for record in self.records)
@@ -354,4 +345,3 @@ _SHARED = CorpusRegistry()
 def shared_registry() -> CorpusRegistry:
     """Return the registry every ``GetBible`` in this process shares."""
     return _SHARED
-

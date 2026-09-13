@@ -30,9 +30,9 @@ __all__ = [
     "validate_search_request",
 ]
 
-#: Bumped whenever matching semantics change, so a downstream result cache can
-#: be invalidated without waiting for a translation SHA to move.
-SEARCH_ENGINE_VERSION = 4
+#: Bumped whenever matching semantics or the response contract change, so a
+#: downstream result cache can expire without waiting for a translation SHA change.
+SEARCH_ENGINE_VERSION = 5
 
 
 @dataclass(frozen=True, slots=True)
