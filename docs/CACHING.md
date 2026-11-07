@@ -9,6 +9,12 @@ fields described in [Translation metadata](TRANSLATION_METADATA.md). Complete
 source payloads remain subject to the same validation and checksum rules;
 existing verified source caches can be reused.
 
+Supplemental metadata, including nested v3 editorial content, is validated
+iteratively without a fixed nesting ceiling. Its source values remain intact;
+the existing response projection and other integrity/resource checks are
+unchanged. Validation uses memory proportional to the current ancestor path
+and rejects cyclic Python payloads without using Python recursion.
+
 Application-owned response caches are a separate concern. Invalidate old
 reference responses or include the library response version in their keys.
 Include `SEARCH_ENGINE_VERSION` (now `5`, previously `4`) in search response

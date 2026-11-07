@@ -49,11 +49,12 @@ The artifact can be downloaded and installed in a clean environment before relea
 
 ## Release preparation
 
-The next prepared version is `3.1.0`. It requires Python 3.11 or newer and
+The next prepared version is `3.1.1`. It removes the fixed nesting-depth
+ceiling for supplemental source metadata. It requires Python 3.11 or newer and
 `filelock>=4.2.1,<5` to exclude vulnerable file-locking releases. The 3.0
 [translation metadata contract](TRANSLATION_METADATA.md) and
 `SEARCH_ENGINE_VERSION=5` remain unchanged. The package version in a source
-checkout is preparation only; consumers can pin `getbible==3.1.0` after PyPI
+checkout is preparation only; consumers can pin `getbible==3.1.1` after PyPI
 publication succeeds. Before then, use the reviewed checkout, its built wheel,
 or an immutable full-commit source pin for validation.
 
