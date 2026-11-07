@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from copy import deepcopy
 from typing import Any
+
+from ._json_copy import copy_json
 
 _TRANSLATION_FIELDS = (
     "translation", "abbreviation", "lang", "language", "direction", "encoding",
@@ -19,9 +20,9 @@ def translation_metadata(data: Mapping[str, Any]) -> dict[str, Any]:
     the static API. Preserve original values, including empty optional labels,
     without inventing values for fields absent from a compatible repository.
     """
-    return {key: deepcopy(data[key]) for key in _TRANSLATION_FIELDS if key in data}
+    return {key: copy_json(data[key]) for key in _TRANSLATION_FIELDS if key in data}
 
 
 def chapter_metadata(data: Mapping[str, Any]) -> dict[str, Any]:
     """Copy translation labels and chapter identity, excluding source extras."""
-    return {key: deepcopy(data[key]) for key in _CHAPTER_FIELDS if key in data}
+    return {key: copy_json(data[key]) for key in _CHAPTER_FIELDS if key in data}
