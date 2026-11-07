@@ -9,7 +9,7 @@ supported Python version in a clean runner:
 
 1. Open **Actions** in GitHub.
 2. Select **CI** and choose **Run workflow** for the branch or commit under
-   review. CI runs deterministic tests on Python 3.10 through 3.14, followed by
+   review. CI runs deterministic tests on Python 3.11 through 3.15, followed by
    lint, security, dependency, package, and isolated-wheel checks.
 3. Select **Live API Integration** and choose **Run workflow** before a release.
    This separate job checks the public API without making pull-request CI
@@ -38,12 +38,12 @@ To append the opt-in live API checks:
 ./scripts/run_release_gate.sh --live
 ```
 
-Set `PYTHON=python3.14` to choose the interpreter when creating `.venv`, or set
+Set `PYTHON=python3.15` to choose the interpreter when creating `.venv`, or set
 `VENV_DIR` to use a different virtual-environment directory. Delete or rename
 an existing environment first if its Python interpreter needs to change.
 
 The local gate validates one Python interpreter. A green GitHub **CI** run is
-still required for the complete Python 3.10–3.14 matrix.
+still required for the complete Python 3.11–3.15 matrix.
 
 ## Manual local commands
 

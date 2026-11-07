@@ -37,7 +37,7 @@ making pull-request CI dependent on the network.
 Every push and pull request to `master` or `staging`, plus a manual **CI**
 workflow dispatch, runs:
 
-- Python 3.10–3.14 deterministic tests;
+- Python 3.11–3.15 deterministic tests;
 - Ruff checks;
 - Bandit and dependency-advisory checks;
 - source and wheel builds;
@@ -49,21 +49,25 @@ The artifact can be downloaded and installed in a clean environment before relea
 
 ## Release preparation
 
-The next prepared version is `3.0.0`. It is a major version because it removes
-supplemental translation fields from public reference and search responses.
-Review the [migration contract](TRANSLATION_METADATA.md), including
-`SEARCH_ENGINE_VERSION=5`, before publication. The package version in a source
-checkout is preparation only; consumers can pin `getbible==3.0.0` after PyPI
+The next prepared version is `3.1.0`. It requires Python 3.11 or newer and
+`filelock>=4.2.1,<5` to exclude vulnerable file-locking releases. The 3.0
+[translation metadata contract](TRANSLATION_METADATA.md) and
+`SEARCH_ENGINE_VERSION=5` remain unchanged. The package version in a source
+checkout is preparation only; consumers can pin `getbible==3.1.0` after PyPI
 publication succeeds. Before then, use the reviewed checkout, its built wheel,
 or an immutable full-commit source pin for validation.
 
 1. Run the local release gate and resolve every failure.
 2. Confirm the exact `staging` commit has a green **CI** workflow run.
 3. Manually run **Live API Integration** for the same `staging` commit.
-4. Review `CHANGELOG.md` and replace the current version's `Unreleased` with the release date.
-5. Confirm the version in `pyproject.toml`.
-6. Merge the exact release state into `master`.
-7. Open the GitHub Actions **Release** workflow, choose **Run workflow**, and enter the version without the leading `v`.
+4. Run the golden-corpus suite against a real API tree:
+   `GETBIBLE_API_FIXTURES=/path/to/api-tree .venv/bin/python -m unittest tests.test_golden_corpora -v`.
+   The tree must contain complete translations, their upstream checksums and
+   books indexes, and cover the supported writing-system families.
+5. Review `CHANGELOG.md` and replace the current version's `Unreleased` with the release date.
+6. Confirm the version in `pyproject.toml`.
+7. Merge the exact release state into `master`.
+8. Open the GitHub Actions **Release** workflow, choose **Run workflow**, and enter the version without the leading `v`.
 
 The workflow freezes the current `master` SHA in its preparation job, requires
 the entered version to match `pyproject.toml`, and passes that exact SHA to
@@ -78,7 +82,7 @@ The manually triggered release workflow:
 
 1. Checks out the exact `master` release commit.
 2. Verifies the entered version against the package version.
-3. Runs the deterministic gate against the frozen commit on Python 3.10–3.14.
+3. Runs the deterministic gate against the frozen commit on Python 3.11–3.15.
 4. Builds source and wheel distributions once, runs `twine check`, installs the
    wheel in isolation, and creates GitHub build-provenance attestations.
 5. Uploads those exact distributions as the immutable workflow artifact.

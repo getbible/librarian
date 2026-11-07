@@ -18,12 +18,13 @@ GetBible Librarian is the Python library used to resolve scripture references, r
 python -m pip install getbible
 ```
 
-Python 3.10 or newer is required.
+Python 3.11 or newer is required. Version 3.1 drops Python 3.10 support to use
+patched `filelock` releases; upgrade the interpreter before upgrading from 3.0.
 
 Version 3.0 narrows translation metadata in reference and search responses to
 six API fields. See the [field contract and migration](docs/TRANSLATION_METADATA.md)
-before upgrading from 2.x. This source prepares `3.0.0`; pin
-`getbible==3.0.0` after that version has been published.
+before upgrading from 2.x. Version 3.1 retains that response contract and
+`SEARCH_ENGINE_VERSION=5`.
 
 ## Retrieve scripture
 
@@ -210,7 +211,7 @@ python -m venv .venv
 
 This creates or reuses `.venv`, installs every development tool, and runs the
 local deterministic release gate. GitHub's manually dispatchable **CI**
-workflow is the authoritative Python 3.10–3.14 check. Live API tests remain
+workflow is the authoritative Python 3.11–3.15 check. Live API tests remain
 separate and intentionally opt-in:
 
 ```bash
