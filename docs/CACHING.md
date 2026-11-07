@@ -9,6 +9,18 @@ fields described in [Translation metadata](TRANSLATION_METADATA.md). Complete
 source payloads remain subject to the same validation and checksum rules;
 existing verified source caches can be reused.
 
+Supplemental metadata, including nested v3 editorial content, is validated
+iteratively without a library-imposed nesting ceiling. Its source values remain intact;
+the existing response projection and other integrity/resource checks are
+unchanged. Validation uses memory proportional to the current ancestor path
+and rejects cyclic Python payloads without using Python recursion.
+
+Reference and search responses also copy validated JSON containers iteratively,
+so annotations accepted by validation do not encounter `deepcopy`'s lower
+recursion threshold when returned. Each response remains detached from retained
+source data. Standard JSON parser and encoder limits still apply; this does
+not promise support for arbitrarily deep input or encoded responses.
+
 Application-owned response caches are a separate concern. Invalidate old
 reference responses or include the library response version in their keys.
 Include `SEARCH_ENGINE_VERSION` (now `5`, previously `4`) in search response

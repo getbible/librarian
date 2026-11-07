@@ -11,6 +11,7 @@ import tempfile
 import threading
 import time
 from collections import OrderedDict
+from collections.abc import Iterator
 from contextlib import suppress
 from dataclasses import dataclass
 from pathlib import Path
@@ -73,7 +74,6 @@ class TranslationCache:
     MAX_NAME_LENGTH = 4_096
     MAX_TEXT_LENGTH = 1_048_576
     MAX_METADATA_ITEMS = 10_000
-    MAX_METADATA_DEPTH = 8
     MAX_METADATA_INTEGER = (1 << 63) - 1
     BOOK_INDEX_METADATA = (
         "translation",
@@ -736,7 +736,7 @@ class TranslationCache:
                 )
             if key == "books":
                 continue
-            cls._validate_metadata_value(value, 0, f"metadata field {key!r}")
+            cls._validate_metadata_value(value, f"metadata field {key!r}")
         cls._required_string(
             data, "translation", cls.MAX_NAME_LENGTH, "translation name"
         )
@@ -757,41 +757,58 @@ class TranslationCache:
             if not isinstance(key, str) or not key or len(key) > 128:
                 raise CacheIntegrityError(f"Translation {label} contains an invalid field name.")
             if key not in structural_fields:
-                cls._validate_metadata_value(item, 0, f"{label} field {key!r}")
+                cls._validate_metadata_value(item, f"{label} field {key!r}")
 
     @classmethod
-    def _validate_metadata_value(cls, value: Any, depth: int, label: str) -> None:
-        if depth > cls.MAX_METADATA_DEPTH:
-            raise CacheIntegrityError(f"Translation {label} exceeds the nesting ceiling.")
-        if isinstance(value, str):
-            if len(value) > cls.MAX_TEXT_LENGTH:
-                raise CacheIntegrityError(f"Translation {label} exceeds the text ceiling.")
-            return
-        if value is None or isinstance(value, bool):
-            return
-        if isinstance(value, int):
-            if abs(value) > cls.MAX_METADATA_INTEGER:
-                raise CacheIntegrityError(f"Translation {label} exceeds the numeric ceiling.")
-            return
-        if isinstance(value, float):
-            if not math.isfinite(value) or abs(value) > cls.MAX_METADATA_INTEGER:
-                raise CacheIntegrityError(f"Translation {label} exceeds the numeric ceiling.")
-            return
-        if isinstance(value, dict):
-            if len(value) > cls.MAX_METADATA_ITEMS:
+    def _validate_metadata_value(cls, value: Any, label: str) -> None:
+        """Validate metadata without limiting legitimate editorial nesting.
+
+        Iterators retain only the current ancestor path, not copies of every
+        container's children. Ancestor tracking rejects cycles in Python
+        payloads while allowing the same object in independent branches.
+        """
+        stack: list[tuple[Iterator[Any], int | None]] = [(iter((value,)), None)]
+        ancestors: set[int] = set()
+        while stack:
+            children, parent = stack[-1]
+            try:
+                item = next(children)
+            except StopIteration:
+                stack.pop()
+                if parent is not None:
+                    ancestors.remove(parent)
+                continue
+
+            if isinstance(item, str):
+                if len(item) > cls.MAX_TEXT_LENGTH:
+                    raise CacheIntegrityError(f"Translation {label} exceeds the text ceiling.")
+                continue
+            if item is None or isinstance(item, bool):
+                continue
+            if isinstance(item, int):
+                if abs(item) > cls.MAX_METADATA_INTEGER:
+                    raise CacheIntegrityError(f"Translation {label} exceeds the numeric ceiling.")
+                continue
+            if isinstance(item, float):
+                if not math.isfinite(item) or abs(item) > cls.MAX_METADATA_INTEGER:
+                    raise CacheIntegrityError(f"Translation {label} exceeds the numeric ceiling.")
+                continue
+            if not isinstance(item, (dict, list)):
+                raise CacheIntegrityError(f"Translation {label} contains an unsupported value.")
+            if len(item) > cls.MAX_METADATA_ITEMS:
                 raise CacheIntegrityError(f"Translation {label} contains too many entries.")
-            for key, item in value.items():
-                if not isinstance(key, str) or not key or len(key) > 128:
-                    raise CacheIntegrityError(f"Translation {label} has an invalid key.")
-                cls._validate_metadata_value(item, depth + 1, label)
-            return
-        if isinstance(value, list):
-            if len(value) > cls.MAX_METADATA_ITEMS:
-                raise CacheIntegrityError(f"Translation {label} contains too many entries.")
-            for item in value:
-                cls._validate_metadata_value(item, depth + 1, label)
-            return
-        raise CacheIntegrityError(f"Translation {label} contains an unsupported value.")
+            identity = id(item)
+            if identity in ancestors:
+                raise CacheIntegrityError(f"Translation {label} contains a cyclic value.")
+            if isinstance(item, dict):
+                for key in item:
+                    if not isinstance(key, str) or not key or len(key) > 128:
+                        raise CacheIntegrityError(f"Translation {label} has an invalid key.")
+                children = iter(item.values())
+            else:
+                children = iter(item)
+            ancestors.add(identity)
+            stack.append((children, identity))
 
     @staticmethod
     def _required_integer(

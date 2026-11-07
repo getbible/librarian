@@ -2,6 +2,22 @@
 
 All notable project changes are documented here.
 
+## [3.1.1] - 2026-11-07
+
+### Fixed
+
+- Accept deeply nested supplemental JSON metadata when loading translations,
+  warming query/search clients, and reading chapters. Metadata traversal is
+  iterative and no longer imposes an arbitrary nesting-depth ceiling.
+- Preserve existing metadata values, response projections, integrity checks,
+  and configured repository/cache/request budgets. Cyclic Python objects
+  remain invalid metadata.
+- Copy validated JSON response containers iteratively, preserving source/cache
+  immutability when deeply nested verse annotations are returned. Cover a
+  600-level annotation published over an existing usable cache through cold and
+  warmed references, search, and JSON response wrappers. Standard JSON parser
+  and encoder limits remain applicable.
+
 ## [3.1.0] - 2026-11-07
 
 ### Security

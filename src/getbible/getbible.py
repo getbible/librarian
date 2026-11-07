@@ -12,11 +12,11 @@ import time
 from collections import OrderedDict
 from collections.abc import Iterator, Sequence
 from contextlib import contextmanager
-from copy import deepcopy
 from dataclasses import dataclass
 from datetime import timedelta
 from typing import Any
 
+from ._json_copy import copy_json
 from ._keyed_locks import KeyedLockPool
 from ._memory import UNSET, estimated_bytes
 from ._result_metadata import chapter_metadata, translation_metadata
@@ -684,7 +684,7 @@ class GetBible:
             record = hit.record
             cache_key = f"{abbreviation}_{record.book_nr}_{record.chapter}"
             if cache_key not in results:
-                results[cache_key] = deepcopy(corpus.chapter_metadata)
+                results[cache_key] = copy_json(corpus.chapter_metadata)
                 results[cache_key].update(
                     {
                         "book_nr": record.book_nr,
@@ -697,7 +697,7 @@ class GetBible:
                 )
                 accumulated_bytes += GetBible._json_bytes(results[cache_key])
             results[cache_key]["ref"].append(record.reference)
-            verse = deepcopy(record.verse)
+            verse = copy_json(record.verse)
             match = {
                 "reference": record.reference,
                 "book_nr": record.book_nr,
@@ -723,7 +723,7 @@ class GetBible:
                 "text": query,
                 "criteria": criteria.to_dict(),
                 "engine_version": execution_info["engine_version"],
-                "translation": deepcopy(corpus.translation_metadata),
+                "translation": copy_json(corpus.translation_metadata),
                 "sha": corpus.sha,
                 "total": total,
                 "offset": criteria.offset,
@@ -786,14 +786,14 @@ class GetBible:
             if cache_key in result:
                 existing_verses = {str(item["verse"]) for item in result[cache_key]["verses"]}
                 if str(verse) not in existing_verses:
-                    result[cache_key]["verses"].append(deepcopy(verse_info))
+                    result[cache_key]["verses"].append(copy_json(verse_info))
                 if book_ref.reference not in result[cache_key]["ref"]:
                     result[cache_key]["ref"].append(book_ref.reference)
                 continue
 
             result[cache_key] = chapter_metadata(chapter_data)
             result[cache_key]["ref"] = [book_ref.reference]
-            result[cache_key]["verses"] = [deepcopy(verse_info)]
+            result[cache_key]["verses"] = [copy_json(verse_info)]
 
     def _chapter(self, abbreviation: str, book: int, chapter: int) -> dict[str, Any]:
         cache_key = f"{abbreviation}_{book}_{chapter}"
