@@ -2,6 +2,15 @@
 
 All notable project changes are documented here.
 
+## Unreleased
+
+### Security
+
+- Require `filelock>=4.2.1,<5` to exclude releases affected by
+  CVE-2026-112909 and CVE-2026-112910.
+- Require Python 3.11 or newer, matching the supported Python versions of the
+  patched filelock releases. Python 3.10 is no longer supported.
+
 ## [3.0.0] - Unreleased
 
 ### Changed

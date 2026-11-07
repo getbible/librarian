@@ -37,7 +37,7 @@ making pull-request CI dependent on the network.
 Every push and pull request to `master` or `staging`, plus a manual **CI**
 workflow dispatch, runs:
 
-- Python 3.10–3.14 deterministic tests;
+- Python 3.11–3.14 deterministic tests;
 - Ruff checks;
 - Bandit and dependency-advisory checks;
 - source and wheel builds;
@@ -78,7 +78,7 @@ The manually triggered release workflow:
 
 1. Checks out the exact `master` release commit.
 2. Verifies the entered version against the package version.
-3. Runs the deterministic gate against the frozen commit on Python 3.10–3.14.
+3. Runs the deterministic gate against the frozen commit on Python 3.11–3.14.
 4. Builds source and wheel distributions once, runs `twine check`, installs the
    wheel in isolation, and creates GitHub build-provenance attestations.
 5. Uploads those exact distributions as the immutable workflow artifact.
