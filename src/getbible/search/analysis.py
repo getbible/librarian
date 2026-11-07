@@ -38,7 +38,8 @@ __all__ = [
 ]
 
 
-class ScriptFamily(str, Enum):
+# Preserve the public Enum string representation across the Python minimum update.
+class ScriptFamily(str, Enum):  # noqa: UP042
     """How a writing system delimits and inflects its searchable units."""
 
     #: Latin, Cyrillic, Greek, Armenian, Georgian, Coptic, Cherokee and peers.
