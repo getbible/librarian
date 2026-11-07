@@ -99,10 +99,11 @@ paths.
    `SEARCH_ENGINE_VERSION`, now `5`. Its previous value was `4`; the source SHA
    can stay the same while the response shape changes. Source-generation
    namespaces alone do not distinguish library response versions.
-5. Pin `getbible==3.0.0` once the existing release workflow publishes it. Before
-   publication, test this checkout or a wheel built from the reviewed commit;
+5. Use a published 3.x release that supports the application's Python version.
+   Version 3.1 requires Python 3.11 or newer and retains this metadata contract.
+   Before a new release is published, test its reviewed checkout or built wheel;
    an immutable full-commit Git dependency pin can identify that same source
-   revision. The version change in this repository does not itself publish a
+   revision. A version change in this repository does not itself publish a
    package or create a release tag.
 
 Verified source translation caches do not need to be deleted for this

@@ -2,7 +2,25 @@
 
 All notable project changes are documented here.
 
-## [3.0.0] - Unreleased
+## [3.1.0] - 2026-11-07
+
+### Security
+
+- Require `filelock>=4.2.1,<5` to exclude releases affected by
+  CVE-2026-112909 and CVE-2026-112910.
+- Require Python 3.11 or newer, matching the supported Python versions of the
+  patched filelock releases. Python 3.10 is no longer supported.
+
+### Compatibility
+
+- Add Python 3.15 to the supported-version classifiers and CI/release matrix.
+- Upgrade Python to 3.11 or newer before installing this release. Package
+  metadata prevents installation on Python 3.10; no vulnerable dependency
+  override is needed on supported interpreters.
+- Retrieval and search behavior, the six-field translation metadata contract,
+  and `SEARCH_ENGINE_VERSION=5` are unchanged from 3.0.0.
+
+## [3.0.0] - 2026-09-13
 
 ### Changed
 
