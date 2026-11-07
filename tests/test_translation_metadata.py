@@ -8,13 +8,21 @@ from copy import deepcopy
 from pathlib import Path
 from unittest.mock import patch
 
-from getbible import GetBible, SearchLimits
+from getbible import CacheIntegrityError, GetBible, SearchLimits
+from getbible.translation_cache import TranslationCache
 
 FIXTURE_REPOSITORY = Path(__file__).parent / "fixtures" / "repository"
 TRANSLATION_FIELDS = {
     "translation", "abbreviation", "lang", "language", "direction", "encoding",
 }
 CHAPTER_FIELDS = {"book_nr", "book_name", "chapter", "name", "ref", "verses"}
+
+
+def nested_metadata(depth: int, leaf: object = "Published editorial text") -> object:
+    value = leaf
+    for level in range(depth):
+        value = {"children": value} if level % 2 else [value]
+    return value
 
 
 class TestTranslationMetadataContract(unittest.TestCase):
@@ -189,6 +197,52 @@ class TestTranslationMetadataContract(unittest.TestCase):
         encoded = json.dumps(response, ensure_ascii=False, separators=(",", ":"))
         self.assertLessEqual(len(encoded.encode("utf-8")), 4096)
 
+    def test_deep_editorial_survives_cold_warm_and_search_paths(self) -> None:
+        for depth in (9, 72):
+            with self.subTest(depth=depth):
+                editorial = nested_metadata(depth)
+                self.source["editorial"] = editorial
+                for book in self.source["books"]:
+                    book["editorial"] = editorial
+                    for chapter in book["chapters"]:
+                        chapter["editorial"] = editorial
+                        for verse in chapter["verses"]:
+                            verse["editorial"] = editorial
+                        path = self.repository / "v2" / "test" / str(book["nr"]) / "1.json"
+                        self._write(path, {
+                            **self.metadata,
+                            "book_nr": book["nr"],
+                            "book_name": book["name"],
+                            **chapter,
+                        })
+                self._write(self.translation_path, self.source)
+                books_path = self.repository / "v2" / "test" / "books.json"
+                books = json.loads(books_path.read_text(encoding="utf-8"))
+                for book in books.values():
+                    book["editorial"] = editorial
+                self._write(books_path, books)
+
+                bible = self._bible()
+                cold = bible.select("Genesis 1:3", "test")["test_1_1"]
+                snapshot = bible._translation_cache.load("test")
+                self.assertEqual(snapshot.data, self.source)
+                self.assertEqual(bible.warm_query("test")["loaded"], 3)
+                warmed = bible.select("Genesis 1:3", "test")["test_1_1"]
+                self.assertEqual(warmed, cold)
+                bible.warm_translation("test")
+                searched = bible.search("faith", "test")
+                self.assertEqual(searched["query"]["translation"], self.metadata)
+                for chapter in (cold, warmed, *searched["results"].values()):
+                    self._assert_chapter(chapter)
+                    for verse in chapter["verses"]:
+                        self.assertEqual(verse["editorial"], editorial)
+                self.assertEqual(snapshot.data, self.source)
+                self.assertEqual(
+                    json.loads(self.translation_path.read_text(encoding="utf-8")),
+                    self.source,
+                )
+                bible.close()
+
     def test_translation_and_language_strings_are_preserved_verbatim(self) -> None:
         self._replace_metadata(
             translation="Librarian Test Translation — full published name",
@@ -223,6 +277,57 @@ class TestTranslationMetadataContract(unittest.TestCase):
         self._assert_chapter(
             self._bible().select("Genesis 1:1", "test")["test_1_1"], expected,
         )
+
+
+class TestMetadataTraversal(unittest.TestCase):
+    def test_validation_does_not_use_the_python_recursion_stack(self) -> None:
+        TranslationCache._validate_metadata_value(nested_metadata(1500), "editorial")
+
+    def test_deep_invalid_values_still_fail_validation(self) -> None:
+        invalid = (
+            (float("nan"), "numeric ceiling"),
+            (float("inf"), "numeric ceiling"),
+            (TranslationCache.MAX_METADATA_INTEGER + 1, "numeric ceiling"),
+            ({"": "invalid key"}, "invalid key"),
+            (("unsupported tuple",), "unsupported value"),
+        )
+        for leaf, message in invalid:
+            with (
+                self.subTest(message=message, leaf=repr(leaf)),
+                self.assertRaisesRegex(CacheIntegrityError, message),
+            ):
+                TranslationCache._validate_metadata_value(
+                    nested_metadata(72, leaf), "editorial",
+                )
+        with (
+            patch.object(TranslationCache, "MAX_TEXT_LENGTH", 3),
+            self.assertRaisesRegex(CacheIntegrityError, "text ceiling"),
+        ):
+            TranslationCache._validate_metadata_value(
+                nested_metadata(72, "long"), "editorial",
+            )
+        with (
+            patch.object(TranslationCache, "MAX_METADATA_ITEMS", 3),
+            self.assertRaisesRegex(CacheIntegrityError, "too many entries"),
+        ):
+            TranslationCache._validate_metadata_value(
+                nested_metadata(72, [None] * 4), "editorial",
+            )
+
+    def test_cycles_are_rejected_but_shared_branches_are_accepted(self) -> None:
+        cyclic_list: list = []
+        cyclic_list.append(cyclic_list)
+        cyclic_dict: dict = {}
+        cyclic_dict["children"] = [cyclic_dict]
+        for value in (cyclic_list, cyclic_dict):
+            with (
+                self.subTest(container=type(value).__name__),
+                self.assertRaisesRegex(CacheIntegrityError, "cyclic value"),
+            ):
+                TranslationCache._validate_metadata_value(value, "editorial")
+
+        shared = {"text": "Shared editorial text"}
+        TranslationCache._validate_metadata_value([shared, shared], "editorial")
 
 
 if __name__ == "__main__":
