@@ -1,10 +1,12 @@
 """Public response contracts for the chapter API's translation metadata subset."""
 
+import hashlib
 import json
 import shutil
 import tempfile
 import unittest
 from copy import deepcopy
+from datetime import timedelta
 from pathlib import Path
 from unittest.mock import patch
 
@@ -242,6 +244,73 @@ class TestTranslationMetadataContract(unittest.TestCase):
                     self.source,
                 )
                 bible.close()
+
+    def test_depth_600_refresh_remains_usable_and_response_mutation_is_isolated(self) -> None:
+        def publish_checksum(path: Path) -> str:
+            checksum = hashlib.sha1(path.read_bytes(), usedforsecurity=False).hexdigest()
+            path.with_suffix(".sha").write_text(checksum, encoding="utf-8")
+            return checksum
+
+        def annotation_leaf(value: object) -> dict:
+            for _ in range(600):
+                value = value["children"] if isinstance(value, dict) else value[0]
+            return value
+
+        initial_sha = publish_checksum(self.translation_path)
+        bible = self._bible(cache_ttl=timedelta(seconds=0))
+        self.assertEqual(bible.search("faith", "test")["query"]["sha"], initial_sha)
+        original_verse = self.source["books"][0]["chapters"][0]["verses"][2]
+        original_verse["editorial"] = nested_metadata(600, {"note": "Published annotation"})
+        self._write(self.translation_path, self.source)
+        chapter = json.loads(self.chapter_path.read_text(encoding="utf-8"))
+        chapter["verses"][2]["editorial"] = original_verse["editorial"]
+        self._write(self.chapter_path, chapter)
+        refreshed_sha = publish_checksum(self.translation_path)
+        publish_checksum(self.chapter_path)
+        source_bytes = self.translation_path.read_bytes()
+        self.assertNotEqual(refreshed_sha, initial_sha)
+
+        # Refresh a previously usable cache, then exercise the same annotation
+        # through cold references, warmed references, search and JSON wrappers.
+        bible.warm_translation("test")
+        snapshot = bible._translation_cache.load("test")
+        self.assertEqual(snapshot.sha, refreshed_sha)
+        self.assertFalse(snapshot.stale)
+        bible.configure_cache(cache_ttl=timedelta(days=7))
+        cold = bible.select("Genesis 1:3", "test")["test_1_1"]
+        bible.warm_query("test")
+        with patch.object(bible._repository, "fetch_bytes", side_effect=AssertionError(
+            "Warmed references must use retained chapter data.",
+        )):
+            warmed = bible.select("Genesis 1:3", "test")["test_1_1"]
+            scripture = json.loads(bible.scripture("Genesis 1:3", "test"))["test_1_1"]
+        searched = bible.search("faith", "test")
+        encoded_search = json.loads(bible.search_json("faith", "test"))
+        self.assertEqual(searched["query"]["sha"], refreshed_sha)
+        self.assertFalse(searched["query"]["cache"]["stale"])
+        self.assertEqual(searched["query"]["translation"], self.metadata)
+
+        for result in (
+            cold, warmed, scripture, searched["results"]["test_1_1"],
+            encoded_search["results"]["test_1_1"],
+        ):
+            self._assert_chapter(result)
+            verse = next(item for item in result["verses"] if item["verse"] == 3)
+            leaf = annotation_leaf(verse["editorial"])
+            self.assertEqual(leaf, {"note": "Published annotation"})
+            leaf["note"] = "Caller mutation"
+
+        cached_verse = snapshot.data["books"][0]["chapters"][0]["verses"][2]
+        self.assertEqual(annotation_leaf(cached_verse["editorial"]),
+                         {"note": "Published annotation"})
+        fresh = bible.select("Genesis 1:3", "test")["test_1_1"]["verses"][0]
+        self.assertEqual(annotation_leaf(fresh["editorial"]), {"note": "Published annotation"})
+        fresh_search = bible.search("faith", "test")["results"]["test_1_1"]["verses"]
+        fresh = next(item for item in fresh_search if item["verse"] == 3)
+        self.assertEqual(annotation_leaf(fresh["editorial"]), {"note": "Published annotation"})
+        self.assertEqual(self.translation_path.read_bytes(), source_bytes)
+        metadata_path = next((self.root / "cache").rglob("test.metadata.json"))
+        self.assertEqual(json.loads(metadata_path.read_text())["sha"], refreshed_sha)
 
     def test_translation_and_language_strings_are_preserved_verbatim(self) -> None:
         self._replace_metadata(
